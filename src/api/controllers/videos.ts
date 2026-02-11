@@ -1,6 +1,7 @@
 import _ from "lodash";
 import fs from "fs-extra";
 import axios from "axios";
+import mime from "mime";
 
 import APIException from "@/lib/exceptions/APIException.ts";
 
@@ -13,6 +14,51 @@ import { DEFAULT_ASSISTANT_ID_CN, DEFAULT_ASSISTANT_ID_US, DEFAULT_ASSISTANT_ID_
 import { uploadImageBuffer } from "@/lib/image-uploader.ts";
 import { extractVideoUrl } from "@/lib/image-utils.ts";
 import taskStore from "@/lib/task-store.ts";
+
+// 媒体类型检测相关
+type MediaType = 'image' | 'video' | 'unknown';
+
+interface UploadedMedia {
+  uri: string;
+  mediaType: MediaType;
+}
+
+const VIDEO_EXTENSIONS = new Set([
+  'mp4', 'mov', 'avi', 'mkv', 'webm', 'flv', 'wmv', 'm4v', 'mpg', 'mpeg', '3gp'
+]);
+
+const IMAGE_EXTENSIONS = new Set([
+  'jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp', 'tiff', 'tif', 'svg', 'avif', 'heic', 'heif'
+]);
+
+/**
+ * 根据文件名检测媒体类型
+ */
+function detectMediaType(filename: string): MediaType {
+  if (!filename) return 'unknown';
+  const ext = filename.split('.').pop()?.toLowerCase()?.split('?')[0];
+  if (!ext) return 'unknown';
+  if (VIDEO_EXTENSIONS.has(ext)) return 'video';
+  if (IMAGE_EXTENSIONS.has(ext)) return 'image';
+  const mimeType = mime.getType(ext);
+  if (mimeType) {
+    if (mimeType.startsWith('video/')) return 'video';
+    if (mimeType.startsWith('image/')) return 'image';
+  }
+  return 'unknown';
+}
+
+/**
+ * 从 URL 检测媒体类型
+ */
+function detectMediaTypeFromUrl(url: string): MediaType {
+  try {
+    const pathname = new URL(url).pathname;
+    return detectMediaType(pathname);
+  } catch {
+    return detectMediaType(url);
+  }
+}
 
 export const DEFAULT_MODEL = DEFAULT_VIDEO_MODEL;
 
@@ -89,14 +135,19 @@ async function uploadImageFromUrl(imageUrl: string, refreshToken: string, region
 
 
 /**
- * 解析 prompt 中的图片占位符并构建 meta_list
- * 支持格式: "使用 @1 图片，@2 图片做动画" -> [text, image(0), text, image(1), text]
+ * 解析 prompt 中的素材占位符并构建 meta_list
+ * 支持格式: "使用 @1 图片，@2 视频做动画" -> [text, image/video(0), text, image/video(1), text]
  */
-function buildMetaListFromPrompt(prompt: string, imageCount: number): Array<{meta_type: string, text?: string, material_ref?: {material_idx: number}}> {
+function buildMetaListFromPrompt(prompt: string, uploadedMedias: UploadedMedia[]): Array<{meta_type: string, text?: string, material_ref?: {material_idx: number}}> {
   const metaList: Array<{meta_type: string, text?: string, material_ref?: {material_idx: number}}> = [];
+  const mediaCount = uploadedMedias.length;
 
-  // 匹配 @1, @2, @图1, @图2, @image1 等格式
-  const placeholderRegex = /@(?:图|image)?(\d+)/gi;
+  const getMetaType = (idx: number): string => {
+    return uploadedMedias[idx]?.mediaType === 'video' ? 'video' : 'image';
+  };
+
+  // 匹配 @1, @2, @图1, @视频1, @image1, @video1 等格式
+  const placeholderRegex = /@(?:图|视频|image|video)?(\d+)/gi;
 
   let lastIndex = 0;
   let match;
@@ -110,13 +161,13 @@ function buildMetaListFromPrompt(prompt: string, imageCount: number): Array<{met
       }
     }
 
-    // 添加图片引用（@1 对应 index 0）
-    const imageIndex = parseInt(match[1]) - 1;
-    if (imageIndex >= 0 && imageIndex < imageCount) {
+    // 添加素材引用（@1 对应 index 0）
+    const mediaIndex = parseInt(match[1]) - 1;
+    if (mediaIndex >= 0 && mediaIndex < mediaCount) {
       metaList.push({
-        meta_type: "image",
+        meta_type: getMetaType(mediaIndex),
         text: "",
-        material_ref: { material_idx: imageIndex }
+        material_ref: { material_idx: mediaIndex }
       });
     }
 
@@ -131,25 +182,28 @@ function buildMetaListFromPrompt(prompt: string, imageCount: number): Array<{met
     }
   }
 
-  // 如果没有找到任何占位符，默认引用所有图片并附加整个 prompt 作为文本
+  // 如果没有找到任何占位符，默认引用所有素材并附加整个 prompt 作为文本
   if (metaList.length === 0) {
-    for (let i = 0; i < imageCount; i++) {
+    for (let i = 0; i < mediaCount; i++) {
       if (i === 0) {
         metaList.push({ meta_type: "text", text: "使用" });
       }
       metaList.push({
-        meta_type: "image",
+        meta_type: getMetaType(i),
         text: "",
         material_ref: { material_idx: i }
       });
-      if (i < imageCount - 1) {
+      if (i < mediaCount - 1) {
         metaList.push({ meta_type: "text", text: "和" });
       }
     }
+    const hasVideo = uploadedMedias.some(m => m.mediaType === 'video');
+    const hasImage = uploadedMedias.some(m => m.mediaType !== 'video');
+    const mediaDesc = hasVideo && hasImage ? '素材' : (hasVideo ? '视频' : '图片');
     if (prompt && prompt.trim()) {
-      metaList.push({ meta_type: "text", text: `图片，${prompt}` });
+      metaList.push({ meta_type: "text", text: `${mediaDesc}，${prompt}` });
     } else {
-      metaList.push({ meta_type: "text", text: "图片生成视频" });
+      metaList.push({ meta_type: "text", text: `${mediaDesc}生成视频` });
     }
   }
 
@@ -157,38 +211,60 @@ function buildMetaListFromPrompt(prompt: string, imageCount: number): Array<{met
 }
 
 /**
- * 构建 Seedance 2.0 多图参考模式的 draft_content
+ * 构建 Seedance 2.0 多图/视频参考模式的 draft_content
  */
 function buildMultiImageDraftContent(
   componentId: string,
   model: string,
   prompt: string,
-  uploadIDs: string[],
+  uploadedMedias: UploadedMedia[],
   ratio: string,
   durationMs: number,
   actualDuration: number,
   metricsExtra: string
 ): string {
-  const metaList = buildMetaListFromPrompt(prompt, uploadIDs.length);
+  const metaList = buildMetaListFromPrompt(prompt, uploadedMedias);
 
-  // 构建 material_list
-  const materialList = uploadIDs.map((uri) => ({
-    type: "",
-    id: util.uuid(),
-    material_type: "image",
-    image_info: {
-      type: "image",
-      id: util.uuid(),
-      source_from: "upload",
-      platform_type: 1,
-      name: "",
-      image_uri: uri,
-      width: 0,
-      height: 0,
-      format: "",
-      uri: uri,
+  // 构建 material_list —— 根据素材类型生成不同结构
+  const materialList = uploadedMedias.map((media) => {
+    if (media.mediaType === 'video') {
+      return {
+        type: "",
+        id: util.uuid(),
+        material_type: "video",
+        video_info: {
+          type: "video",
+          id: util.uuid(),
+          source_from: "upload",
+          platform_type: 1,
+          name: "",
+          video_uri: media.uri,
+          width: 0,
+          height: 0,
+          format: "",
+          uri: media.uri,
+          duration: 0,
+        }
+      };
     }
-  }));
+    return {
+      type: "",
+      id: util.uuid(),
+      material_type: "image",
+      image_info: {
+        type: "image",
+        id: util.uuid(),
+        source_from: "upload",
+        platform_type: 1,
+        name: "",
+        image_uri: media.uri,
+        width: 0,
+        height: 0,
+        format: "",
+        uri: media.uri,
+      }
+    };
+  });
 
   // 计算视频宽高比字符串
   const gcd = (a: number, b: number): number => b === 0 ? a : gcd(b, a % b);
@@ -356,7 +432,7 @@ async function prepareAndSubmitVideo(
   // 处理首帧和尾帧图片
   let first_frame_image = undefined;
   let end_frame_image = undefined;
-  let uploadIDs: string[] = [];
+  let uploadedMedias: UploadedMedia[] = [];
 
   // 优先处理本地上传的文件
   const uploadedFiles = _.values(files); // 将files对象转为数组
@@ -366,57 +442,62 @@ async function prepareAndSubmitVideo(
       const file = uploadedFiles[i];
       if (!file) continue;
       try {
-        logger.info(`开始上传第 ${i + 1} 张本地图片: ${file.originalFilename}`);
-        const imageUri = await uploadImageFromFile(file, refreshToken, regionInfo);
-        if (imageUri) {
-          uploadIDs.push(imageUri);
-          logger.info(`第 ${i + 1} 张本地图片上传成功: ${imageUri}`);
+        const mediaType = detectMediaType(file.originalFilename || '');
+        logger.info(`开始上传第 ${i + 1} 个本地文件: ${file.originalFilename} (类型: ${mediaType})`);
+        const uri = await uploadImageFromFile(file, refreshToken, regionInfo);
+        if (uri) {
+          uploadedMedias.push({ uri, mediaType });
+          logger.info(`第 ${i + 1} 个本地文件上传成功: ${uri}`);
         } else {
-          logger.error(`第 ${i + 1} 张本地图片上传失败: 未获取到 image_uri`);
+          logger.error(`第 ${i + 1} 个本地文件上传失败: 未获取到 uri`);
         }
       } catch (error: any) {
-        logger.error(`第 ${i + 1} 张本地图片上传失败: ${error.message}`);
+        logger.error(`第 ${i + 1} 个本地文件上传失败: ${error.message}`);
         if (i === 0) {
-          throw new APIException(EX.API_REQUEST_FAILED, `首帧图片上传失败: ${error.message}`);
+          throw new APIException(EX.API_REQUEST_FAILED, `首个文件上传失败: ${error.message}`);
         }
       }
     }
   }
   // 如果没有本地文件，再处理URL
   else if (filePaths && filePaths.length > 0) {
-    logger.info(`未检测到本地上传文件，处理 ${filePaths.length} 个图片URL`);
+    logger.info(`未检测到本地上传文件，处理 ${filePaths.length} 个URL`);
     for (let i = 0; i < filePaths.length; i++) {
       const filePath = filePaths[i];
       if (!filePath) {
-        logger.warn(`第 ${i + 1} 个图片URL为空，跳过`);
+        logger.warn(`第 ${i + 1} 个URL为空，跳过`);
         continue;
       }
       try {
-        logger.info(`开始上传第 ${i + 1} 个URL图片: ${filePath}`);
-        const imageUri = await uploadImageFromUrl(filePath, refreshToken, regionInfo);
-        if (imageUri) {
-          uploadIDs.push(imageUri);
-          logger.info(`第 ${i + 1} 个URL图片上传成功: ${imageUri}`);
+        const mediaType = detectMediaTypeFromUrl(filePath);
+        logger.info(`开始上传第 ${i + 1} 个URL文件: ${filePath} (类型: ${mediaType})`);
+        const uri = await uploadImageFromUrl(filePath, refreshToken, regionInfo);
+        if (uri) {
+          uploadedMedias.push({ uri, mediaType });
+          logger.info(`第 ${i + 1} 个URL文件上传成功: ${uri}`);
         } else {
-          logger.error(`第 ${i + 1} 个URL图片上传失败: 未获取到 image_uri`);
+          logger.error(`第 ${i + 1} 个URL文件上传失败: 未获取到 uri`);
         }
       } catch (error: any) {
-        logger.error(`第 ${i + 1} 个URL图片上传失败: ${error.message}`);
+        logger.error(`第 ${i + 1} 个URL文件上传失败: ${error.message}`);
         if (i === 0) {
-          throw new APIException(EX.API_REQUEST_FAILED, `首帧图片上传失败: ${error.message}`);
+          throw new APIException(EX.API_REQUEST_FAILED, `首个文件上传失败: ${error.message}`);
         }
       }
     }
   } else {
-    logger.info(`未提供图片文件或URL，将进行纯文本视频生成`);
+    logger.info(`未提供文件或URL，将进行纯文本视频生成`);
   }
+
+  // 兼容旧逻辑的 uploadIDs
+  const uploadIDs = uploadedMedias.map(m => m.uri);
 
   // 判断是否使用 Seedance 2.0 多图参考模式
   const isMultiImageMode = is40Pro && imageMode === "reference";
 
   // 如果有图片上传且非多图模式，构建首帧/尾帧对象
   if (uploadIDs.length > 0 && !isMultiImageMode) {
-    logger.info(`图片上传完成，共成功 ${uploadIDs.length} 张`);
+    logger.info(`文件上传完成，共成功 ${uploadIDs.length} 个`);
     // 构建首帧图片对象
     if (uploadIDs[0]) {
       first_frame_image = {
@@ -459,13 +540,23 @@ async function prepareAndSubmitVideo(
   // 多图模式使用 omni_reference，其他使用 first_last_frames
   const functionMode = isMultiImageMode ? "omni_reference" : "first_last_frames";
 
+  // 动态计算 materialTypes
+  const materialTypes: number[] = [];
+  if (isMultiImageMode && uploadedMedias.length > 0) {
+    const hasImage = uploadedMedias.some(m => m.mediaType === 'image' || m.mediaType === 'unknown');
+    const hasVideo = uploadedMedias.some(m => m.mediaType === 'video');
+    if (hasImage) materialTypes.push(1);
+    if (hasVideo) materialTypes.push(2);
+    if (materialTypes.length === 0) materialTypes.push(1);
+  }
+
   const sceneOption = {
     type: "video",
     scene: "BasicVideoGenerateButton",
     ...(supportsResolution ? { resolution: resolution } : {}),
     modelReqKey: model,
     videoDuration: actualDuration,
-    ...(isMultiImageMode ? { materialTypes: [1] } : {}),
+    ...(isMultiImageMode ? { materialTypes } : {}),
     reportParams: {
       enterSource: "generate",
       vipSource: "generate",
@@ -491,14 +582,16 @@ async function prepareAndSubmitVideo(
   }
 
   if (isMultiImageMode) {
-    logger.info(`视频生成模式: Seedance 2.0 多图参考 (${uploadIDs.length}张图片)`);
+    const videoCount = uploadedMedias.filter(m => m.mediaType === 'video').length;
+    const imageCount = uploadedMedias.length - videoCount;
+    logger.info(`视频生成模式: Seedance 2.0 参考模式 (${imageCount}张图片, ${videoCount}个视频)`);
   } else {
     logger.info(`视频生成模式: ${uploadIDs.length}张图片 (首帧: ${!!first_frame_image}, 尾帧: ${!!end_frame_image}), resolution: ${resolution}`);
   }
 
   // 构建 draft_content
   const draftContentStr = isMultiImageMode
-    ? buildMultiImageDraftContent(componentId, model, prompt, uploadIDs, ratio, durationMs, actualDuration, metricsExtra)
+    ? buildMultiImageDraftContent(componentId, model, prompt, uploadedMedias, ratio, durationMs, actualDuration, metricsExtra)
     : JSON.stringify({
         "type": "draft",
         "id": util.uuid(),

@@ -46,10 +46,10 @@ export default {
                 .validate('body.async', v => _.isUndefined(v) || _.isBoolean(v) || (isMultiPart && (v === 'true' || v === 'false')))
                 .validate('headers.authorization', _.isString);
 
-            // 限制上传文件数量最多5个（Seedance 2.0 多图模式支持3-5张）
+            // 限制上传文件数量最多5个（Seedance 2.0 参考模式支持3-5个文件，包括图片和视频）
             const uploadedFiles = request.files ? _.values(request.files) : [];
             if (uploadedFiles.length > 5) {
-                throw new Error('最多只能上传5个图片文件');
+                throw new Error('最多只能上传5个文件');
             }
 
             // refresh_token切分
