@@ -39,9 +39,9 @@ export default {
                     }
                     return Number.isInteger(num) && num >= 4 && num <= 15;
                 })
-                // 限制文件URL数量最多3个（omni_reference 2图片+1视频）
-                .validate('body.file_paths', v => _.isUndefined(v) || (_.isArray(v) && v.length <= 3))
-                .validate('body.filePaths', v => _.isUndefined(v) || (_.isArray(v) && v.length <= 3))
+                // 限制文件URL数量最多12个（omni_reference 9图片+3视频）
+                .validate('body.file_paths', v => _.isUndefined(v) || (_.isArray(v) && v.length <= 12))
+                .validate('body.filePaths', v => _.isUndefined(v) || (_.isArray(v) && v.length <= 12))
                 .validate('body.functionMode', v => _.isUndefined(v) || (_.isString(v) && ['first_last_frames', 'omni_reference'].includes(v)))
                 .validate('body.response_format', v => _.isUndefined(v) || _.isString(v))
                 .validate('body.async', v => _.isUndefined(v) || _.isBoolean(v) || (isMultiPart && (v === 'true' || v === 'false')))
@@ -50,13 +50,13 @@ export default {
             const functionMode = request.body.functionMode || 'first_last_frames';
             const isOmniMode = functionMode === 'omni_reference';
 
-            // omni_reference 模式最多3个文件 (2图片+1视频)，普通模式最多2个
+            // omni_reference 模式最多12个文件 (9图片+3视频)，普通模式最多2个
             const uploadedFiles = request.files ? _.flatten(_.values(request.files)) : [];
-            const maxFiles = isOmniMode ? 3 : 2;
+            const maxFiles = isOmniMode ? 12 : 2;
             const bodyFilePaths = request.body.file_paths || request.body.filePaths || [];
             const totalInputFiles = uploadedFiles.length + (Array.isArray(bodyFilePaths) ? bodyFilePaths.length : 0);
             if (totalInputFiles > maxFiles) {
-                throw new Error(isOmniMode ? '全能模式最多上传3个文件(2图片+1视频)' : '最多只能上传2个图片文件');
+                throw new Error(isOmniMode ? '全能模式最多上传12个文件(9图片+3视频)' : '最多只能上传2个图片文件');
             }
             // omni_reference 模式至少需要1个素材文件（multipart上传或file_paths URL）
             if (isOmniMode && totalInputFiles === 0) {

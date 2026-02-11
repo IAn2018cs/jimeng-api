@@ -305,7 +305,7 @@ async function prepareAndSubmitVideo(
 
       if (fileType === 'video') {
         videoCount++;
-        if (videoCount > 1) throw new APIException(EX.API_REQUEST_FAILED, `最多只能上传1个视频文件`);
+        if (videoCount > 3) throw new APIException(EX.API_REQUEST_FAILED, `最多只能上传3个视频文件`);
 
         try {
           logger.info(`[omni] 上传视频 ${refName}: ${file.originalFilename}`);
@@ -322,7 +322,7 @@ async function prepareAndSubmitVideo(
         }
       } else {
         imageCount++;
-        if (imageCount > 2) throw new APIException(EX.API_REQUEST_FAILED, `最多只能上传2张图片`);
+        if (imageCount > 9) throw new APIException(EX.API_REQUEST_FAILED, `最多只能上传9张图片`);
 
         try {
           logger.info(`[omni] 上传图片 ${refName}: ${file.originalFilename}`);
@@ -352,7 +352,7 @@ async function prepareAndSubmitVideo(
 
         if (fileType === 'video') {
           videoCount++;
-          if (videoCount > 1) throw new APIException(EX.API_REQUEST_FAILED, `最多只能上传1个视频文件`);
+          if (videoCount > 3) throw new APIException(EX.API_REQUEST_FAILED, `最多只能上传3个视频文件`);
 
           try {
             logger.info(`[omni] 从URL下载并上传视频 ${refName}: ${fileUrl}`);
@@ -372,7 +372,7 @@ async function prepareAndSubmitVideo(
           }
         } else {
           imageCount++;
-          if (imageCount > 2) throw new APIException(EX.API_REQUEST_FAILED, `最多只能上传2张图片`);
+          if (imageCount > 9) throw new APIException(EX.API_REQUEST_FAILED, `最多只能上传9张图片`);
 
           try {
             logger.info(`[omni] 从URL下载并上传图片 ${refName}: ${fileUrl}`);

@@ -99,7 +99,7 @@ omni_reference 模式支持**图片和视频混合参考**，通过以下方式�
 **其他格式默认识别为图片。**
 
 **限制：**
-- 至少提供 1 个文件，最多 3 个文件（2图片 + 1视频）
+- 至少提供 1 个文件，最多 12 个文件（9图片 + 3视频）
 - 视频时长不超过 15 秒
 
 **prompt 中引用素材：**
@@ -399,7 +399,7 @@ for i in range(240):  # 最多 20 分钟
 2. 任务记录 **3 天后自动过期删除**，请及时获取结果
 3. 图生视频时 `ratio` 参数会被输入图片的实际比例覆盖
 4. 同一个 `task_id` 可以无限次查询，直到过期
-5. 全能参考模式（`functionMode: "omni_reference"`）仅 `jimeng-video-seedance-2.0` 支持，支持 `file_paths` URL 数组、multipart 文件上传、以及旧版具名字段（`image_file_1`/`image_file_2`/`video_file`）
+5. 全能参考模式（`functionMode: "omni_reference"`）仅 `jimeng-video-seedance-2.0` 支持，支持 `file_paths` URL 数组、multipart 文件上传、以及旧版具名字段（`image_file_1`/`image_file_2`/`video_file`），最多 9 张图片 + 3 段视频
 6. 全能参考模式下，通用上传用 `@file_1`/`@file_2` 引用素材，具名字段用 `@image_file_1`/`@video_file` 引用，也支持 `@原始文件名`
 7. 系统根据文件扩展名（.mp4/.mov 等为视频）或 MIME 类型自动判断图片/视频
 8. 图片上传后会进行内容安全检测（仅国内站），违规内容会被拒绝
