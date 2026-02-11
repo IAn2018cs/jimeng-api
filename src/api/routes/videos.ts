@@ -30,8 +30,9 @@ export default {
                     if (_.isUndefined(v)) return true;
                     // 支持的时长范围: 4~15 (seedance 2.0 支持任意整数秒)
                     let num: number;
-                    if (isMultiPart && typeof v === 'string') {
+                    if (typeof v === 'string') {
                         num = parseInt(v);
+                        if (isNaN(num)) return false;
                     } else if (_.isFinite(v)) {
                         num = v as number;
                     } else {
@@ -71,8 +72,8 @@ export default {
                 async: isAsync = false
             } = request.body;
 
-            // 如果是 multipart/form-data，需要将字符串转换为对应类型
-            const finalDuration = isMultiPart && typeof duration === 'string'
+            // 将字符串类型的 duration 转换为数字
+            const finalDuration = typeof duration === 'string'
                 ? parseInt(duration)
                 : duration;
             const finalAsync = isMultiPart && typeof isAsync === 'string'
