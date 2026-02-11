@@ -30,8 +30,8 @@ RUN npm run build
 # 生产阶段
 FROM node:18-alpine AS production
 
-# 安装健康检查工具和原生模块编译依赖（better-sqlite3 需要）
-RUN apk add --no-cache wget python3 make g++
+# 安装健康检查工具、su-exec（用于entrypoint切换用户）和原生模块编译依赖（better-sqlite3 需要）
+RUN apk add --no-cache wget su-exec python3 make g++
 
 # 创建非root用户
 RUN addgroup -g 1001 -S nodejs && \
@@ -57,11 +57,12 @@ COPY --from=builder --chown=jimeng:nodejs /app/configs ./configs
 RUN mkdir -p /app/logs /app/tmp /app/data && \
     chown -R jimeng:nodejs /app/logs /app/tmp /app/data
 
+# 复制 entrypoint 脚本
+COPY entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
+
 # 设置环境变量
 ENV SERVER_PORT=5100
-
-# 切换到非root用户
-USER jimeng
 
 # 暴露端口
 EXPOSE 5100
@@ -70,5 +71,6 @@ EXPOSE 5100
 HEALTHCHECK --interval=15s --timeout=5s --start-period=20s --retries=3 \
     CMD wget -q --spider http://localhost:5100/ping
 
-# 启动应用
+# 使用 entrypoint 脚本：以 root 启动修复挂载目录权限，然后切换到 jimeng 用户运行应用
+ENTRYPOINT ["/app/entrypoint.sh"]
 CMD ["npm", "start"]
