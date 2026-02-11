@@ -30,8 +30,8 @@ RUN npm run build
 # 生产阶段
 FROM node:18-alpine AS production
 
-# 安装健康检查工具
-RUN apk add --no-cache wget
+# 安装健康检查工具和原生模块编译依赖（better-sqlite3 需要）
+RUN apk add --no-cache wget python3 make g++
 
 # 创建非root用户
 RUN addgroup -g 1001 -S nodejs && \
@@ -46,15 +46,16 @@ COPY --from=builder /app/package-lock.json ./package-lock.json
 
 # 只安装生产依赖
 RUN npm ci --omit=dev --registry https://registry.npmmirror.com/ && \
-    npm cache clean --force
+    npm cache clean --force && \
+    apk del python3 make g++
 
 # 从构建阶段复制构建产物
 COPY --from=builder --chown=jimeng:nodejs /app/dist ./dist
 COPY --from=builder --chown=jimeng:nodejs /app/configs ./configs
 
 # 创建应用需要的目录并设置权限
-RUN mkdir -p /app/logs /app/tmp && \
-    chown -R jimeng:nodejs /app/logs /app/tmp
+RUN mkdir -p /app/logs /app/tmp /app/data && \
+    chown -R jimeng:nodejs /app/logs /app/tmp /app/data
 
 # 设置环境变量
 ENV SERVER_PORT=5100
