@@ -9,7 +9,7 @@ import util from "@/lib/util.ts";
 import { getCredit, receiveCredit, request, parseRegionFromToken, getAssistantId, RegionInfo } from "./core.ts";
 import logger from "@/lib/logger.ts";
 import { SmartPoller, PollingStatus } from "@/lib/smart-poller.ts";
-import { DEFAULT_ASSISTANT_ID_CN, DEFAULT_ASSISTANT_ID_US, DEFAULT_ASSISTANT_ID_HK, DEFAULT_ASSISTANT_ID_JP, DEFAULT_ASSISTANT_ID_SG, DEFAULT_VIDEO_MODEL, DRAFT_VERSION, VIDEO_MODEL_MAP, VIDEO_MODEL_MAP_US, VIDEO_MODEL_MAP_ASIA, STATUS_CODE_MAP } from "@/api/consts/common.ts";
+import { DEFAULT_ASSISTANT_ID_CN, DEFAULT_ASSISTANT_ID_US, DEFAULT_ASSISTANT_ID_HK, DEFAULT_ASSISTANT_ID_JP, DEFAULT_ASSISTANT_ID_SG, DEFAULT_VIDEO_MODEL, DRAFT_VERSION, DRAFT_VERSION_MULTI_IMAGE, VIDEO_MODEL_MAP, VIDEO_MODEL_MAP_US, VIDEO_MODEL_MAP_ASIA, STATUS_CODE_MAP } from "@/api/consts/common.ts";
 import { uploadImageBuffer } from "@/lib/image-uploader.ts";
 import { extractVideoUrl } from "@/lib/image-utils.ts";
 import taskStore from "@/lib/task-store.ts";
@@ -89,6 +89,174 @@ async function uploadImageFromUrl(imageUrl: string, refreshToken: string, region
 
 
 /**
+ * 解析 prompt 中的图片占位符并构建 meta_list
+ * 支持格式: "使用 @1 图片，@2 图片做动画" -> [text, image(0), text, image(1), text]
+ */
+function buildMetaListFromPrompt(prompt: string, imageCount: number): Array<{meta_type: string, text?: string, material_ref?: {material_idx: number}}> {
+  const metaList: Array<{meta_type: string, text?: string, material_ref?: {material_idx: number}}> = [];
+
+  // 匹配 @1, @2, @图1, @图2, @image1 等格式
+  const placeholderRegex = /@(?:图|image)?(\d+)/gi;
+
+  let lastIndex = 0;
+  let match;
+
+  while ((match = placeholderRegex.exec(prompt)) !== null) {
+    // 添加占位符前的文本
+    if (match.index > lastIndex) {
+      const textBefore = prompt.substring(lastIndex, match.index);
+      if (textBefore.trim()) {
+        metaList.push({ meta_type: "text", text: textBefore });
+      }
+    }
+
+    // 添加图片引用（@1 对应 index 0）
+    const imageIndex = parseInt(match[1]) - 1;
+    if (imageIndex >= 0 && imageIndex < imageCount) {
+      metaList.push({
+        meta_type: "image",
+        text: "",
+        material_ref: { material_idx: imageIndex }
+      });
+    }
+
+    lastIndex = match.index + match[0].length;
+  }
+
+  // 添加剩余的文本
+  if (lastIndex < prompt.length) {
+    const remainingText = prompt.substring(lastIndex);
+    if (remainingText.trim()) {
+      metaList.push({ meta_type: "text", text: remainingText });
+    }
+  }
+
+  // 如果没有找到任何占位符，默认引用所有图片并附加整个 prompt 作为文本
+  if (metaList.length === 0) {
+    for (let i = 0; i < imageCount; i++) {
+      if (i === 0) {
+        metaList.push({ meta_type: "text", text: "使用" });
+      }
+      metaList.push({
+        meta_type: "image",
+        text: "",
+        material_ref: { material_idx: i }
+      });
+      if (i < imageCount - 1) {
+        metaList.push({ meta_type: "text", text: "和" });
+      }
+    }
+    if (prompt && prompt.trim()) {
+      metaList.push({ meta_type: "text", text: `图片，${prompt}` });
+    } else {
+      metaList.push({ meta_type: "text", text: "图片生成视频" });
+    }
+  }
+
+  return metaList;
+}
+
+/**
+ * 构建 Seedance 2.0 多图参考模式的 draft_content
+ */
+function buildMultiImageDraftContent(
+  componentId: string,
+  model: string,
+  prompt: string,
+  uploadIDs: string[],
+  ratio: string,
+  durationMs: number,
+  actualDuration: number,
+  metricsExtra: string
+): string {
+  const metaList = buildMetaListFromPrompt(prompt, uploadIDs.length);
+
+  // 构建 material_list
+  const materialList = uploadIDs.map((uri) => ({
+    type: "",
+    id: util.uuid(),
+    material_type: "image",
+    image_info: {
+      type: "image",
+      id: util.uuid(),
+      source_from: "upload",
+      platform_type: 1,
+      name: "",
+      image_uri: uri,
+      width: 0,
+      height: 0,
+      format: "",
+      uri: uri,
+    }
+  }));
+
+  // 计算视频宽高比字符串
+  const gcd = (a: number, b: number): number => b === 0 ? a : gcd(b, a % b);
+  const [rw, rh] = ratio.split(":").map(Number);
+  const divisor = gcd(rw, rh);
+  const aspectRatio = `${rw / divisor}:${rh / divisor}`;
+
+  return JSON.stringify({
+    type: "draft",
+    id: util.uuid(),
+    min_version: DRAFT_VERSION_MULTI_IMAGE,
+    min_features: ["AIGC_Video_UnifiedEdit"],
+    is_from_tsn: true,
+    version: DRAFT_VERSION_MULTI_IMAGE,
+    main_component_id: componentId,
+    component_list: [{
+      type: "video_base_component",
+      id: componentId,
+      min_version: "1.0.0",
+      aigc_mode: "workbench",
+      metadata: {
+        type: "",
+        id: util.uuid(),
+        created_platform: 3,
+        created_platform_version: "",
+        created_time_in_ms: Date.now().toString(),
+        created_did: ""
+      },
+      generate_type: "gen_video",
+      abilities: {
+        type: "",
+        id: util.uuid(),
+        gen_video: {
+          id: util.uuid(),
+          type: "",
+          text_to_video_params: {
+            type: "",
+            id: util.uuid(),
+            video_gen_inputs: [{
+              type: "",
+              id: util.uuid(),
+              min_version: DRAFT_VERSION_MULTI_IMAGE,
+              prompt: "",  // Seedance 2.0 多图模式 prompt 在 meta_list 中
+              video_mode: 2,
+              fps: 24,
+              duration_ms: durationMs,
+              idip_meta_list: [],
+              unified_edit_input: {
+                type: "",
+                id: util.uuid(),
+                material_list: materialList,
+                meta_list: metaList
+              }
+            }],
+            video_aspect_ratio: aspectRatio,
+            seed: Math.floor(Math.random() * 100000000) + 2500000000,
+            model_req_key: model,
+            priority: 0
+          },
+          video_task_extra: metricsExtra,
+        }
+      },
+      process_type: 1
+    }],
+  });
+}
+
+/**
  * 准备参数并提交视频生成任务
  * 包含：区域检测、模型映射、时长处理、积分检查、图片上传、构建请求、提交任务
  *
@@ -103,12 +271,14 @@ async function prepareAndSubmitVideo(
     duration = 5,
     filePaths = [],
     files = {},
+    imageMode = "keyframe",
   }: {
     ratio?: string;
     resolution?: string;
     duration?: number;
     filePaths?: string[];
     files?: any;
+    imageMode?: string;
   },
   refreshToken: string
 ): Promise<string> {
@@ -241,8 +411,11 @@ async function prepareAndSubmitVideo(
     logger.info(`未提供图片文件或URL，将进行纯文本视频生成`);
   }
 
-  // 如果有图片上传（无论来源），构建对象
-  if (uploadIDs.length > 0) {
+  // 判断是否使用 Seedance 2.0 多图参考模式
+  const isMultiImageMode = is40Pro && imageMode === "reference";
+
+  // 如果有图片上传且非多图模式，构建首帧/尾帧对象
+  if (uploadIDs.length > 0 && !isMultiImageMode) {
     logger.info(`图片上传完成，共成功 ${uploadIDs.length} 张`);
     // 构建首帧图片对象
     if (uploadIDs[0]) {
@@ -283,9 +456,8 @@ async function prepareAndSubmitVideo(
   const componentId = util.uuid();
   const originSubmitId = util.uuid();
 
-  // 根据官方API的实际行为，所有模式都使用 "first_last_frames"
-  // 通过 first_frame_image 和 end_frame_image 是否为 undefined 来区分模式
-  const functionMode = "first_last_frames";
+  // 多图模式使用 omni_reference，其他使用 first_last_frames
+  const functionMode = isMultiImageMode ? "omni_reference" : "first_last_frames";
 
   const sceneOption = {
     type: "video",
@@ -293,6 +465,7 @@ async function prepareAndSubmitVideo(
     ...(supportsResolution ? { resolution: resolution } : {}),
     modelReqKey: model,
     videoDuration: actualDuration,
+    ...(isMultiImageMode ? { materialTypes: [1] } : {}),
     reportParams: {
       enterSource: "generate",
       vipSource: "generate",
@@ -317,7 +490,70 @@ async function prepareAndSubmitVideo(
     logger.warn(`图生视频模式下，ratio参数将被忽略（由输入图片的实际比例决定），但resolution参数仍然有效`);
   }
 
-  logger.info(`视频生成模式: ${uploadIDs.length}张图片 (首帧: ${!!first_frame_image}, 尾帧: ${!!end_frame_image}), resolution: ${resolution}`);
+  if (isMultiImageMode) {
+    logger.info(`视频生成模式: Seedance 2.0 多图参考 (${uploadIDs.length}张图片)`);
+  } else {
+    logger.info(`视频生成模式: ${uploadIDs.length}张图片 (首帧: ${!!first_frame_image}, 尾帧: ${!!end_frame_image}), resolution: ${resolution}`);
+  }
+
+  // 构建 draft_content
+  const draftContentStr = isMultiImageMode
+    ? buildMultiImageDraftContent(componentId, model, prompt, uploadIDs, ratio, durationMs, actualDuration, metricsExtra)
+    : JSON.stringify({
+        "type": "draft",
+        "id": util.uuid(),
+        "min_version": "3.0.5",
+        "min_features": [],
+        "is_from_tsn": true,
+        "version": DRAFT_VERSION,
+        "main_component_id": componentId,
+        "component_list": [{
+          "type": "video_base_component",
+          "id": componentId,
+          "min_version": "1.0.0",
+          "aigc_mode": "workbench",
+          "metadata": {
+            "type": "",
+            "id": util.uuid(),
+            "created_platform": 3,
+            "created_platform_version": "",
+            "created_time_in_ms": Date.now().toString(),
+            "created_did": ""
+          },
+          "generate_type": "gen_video",
+          "abilities": {
+            "type": "",
+            "id": util.uuid(),
+            "gen_video": {
+              "id": util.uuid(),
+              "type": "",
+              "text_to_video_params": {
+                "type": "",
+                "id": util.uuid(),
+                "video_gen_inputs": [{
+                  "type": "",
+                  "id": util.uuid(),
+                  "min_version": "3.0.5",
+                  "prompt": prompt,
+                  "video_mode": 2,
+                  "fps": 24,
+                  "duration_ms": durationMs,
+                  ...(supportsResolution ? { "resolution": resolution } : {}),
+                  "first_frame_image": first_frame_image,
+                  "end_frame_image": end_frame_image,
+                  "idip_meta_list": []
+                }],
+                "video_aspect_ratio": ratio,
+                "seed": Math.floor(Math.random() * 100000000) + 2500000000,
+                "model_req_key": model,
+                "priority": 0
+              },
+              "video_task_extra": metricsExtra,
+            }
+          },
+          "process_type": 1
+        }],
+      });
 
   // 构建请求参数
   const { aigc_data } = await request(
@@ -328,7 +564,7 @@ async function prepareAndSubmitVideo(
       params: {
         aigc_features: "app_lip_sync",
         web_version: "7.5.0",
-        da_version: DRAFT_VERSION,
+        da_version: isMultiImageMode ? DRAFT_VERSION_MULTI_IMAGE : DRAFT_VERSION,
       },
       data: {
         "extend": {
@@ -348,61 +584,7 @@ async function prepareAndSubmitVideo(
         },
         "submit_id": util.uuid(),
         "metrics_extra": metricsExtra,
-        "draft_content": JSON.stringify({
-          "type": "draft",
-          "id": util.uuid(),
-          "min_version": "3.0.5",
-          "min_features": [],
-          "is_from_tsn": true,
-          "version": DRAFT_VERSION,
-          "main_component_id": componentId,
-          "component_list": [{
-            "type": "video_base_component",
-            "id": componentId,
-            "min_version": "1.0.0",
-            "aigc_mode": "workbench",
-            "metadata": {
-              "type": "",
-              "id": util.uuid(),
-              "created_platform": 3,
-              "created_platform_version": "",
-              "created_time_in_ms": Date.now().toString(),
-              "created_did": ""
-            },
-            "generate_type": "gen_video",
-            "abilities": {
-              "type": "",
-              "id": util.uuid(),
-              "gen_video": {
-                "id": util.uuid(),
-                "type": "",
-                "text_to_video_params": {
-                  "type": "",
-                  "id": util.uuid(),
-                  "video_gen_inputs": [{
-                    "type": "",
-                    "id": util.uuid(),
-                    "min_version": "3.0.5",
-                    "prompt": prompt,
-                    "video_mode": 2,
-                    "fps": 24,
-                    "duration_ms": durationMs,
-                    ...(supportsResolution ? { "resolution": resolution } : {}),
-                    "first_frame_image": first_frame_image,
-                    "end_frame_image": end_frame_image,
-                    "idip_meta_list": []
-                  }],
-                  "video_aspect_ratio": ratio,
-                  "seed": Math.floor(Math.random() * 100000000) + 2500000000,
-                  "model_req_key": model,
-                  "priority": 0
-                },
-                "video_task_extra": metricsExtra,
-              }
-            },
-            "process_type": 1
-          }],
-        }),
+        "draft_content": draftContentStr,
         http_common_info: {
           aid: getAssistantId(regionInfo)
         },
@@ -570,6 +752,7 @@ export async function generateVideo(
     duration?: number;
     filePaths?: string[];
     files?: any;
+    imageMode?: string;
   },
   refreshToken: string
 ) {
@@ -593,6 +776,7 @@ export async function submitVideoTaskAsync(
     duration?: number;
     filePaths?: string[];
     files?: any;
+    imageMode?: string;
   },
   refreshToken: string
 ): Promise<void> {

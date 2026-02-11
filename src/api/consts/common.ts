@@ -36,6 +36,7 @@ export const DEFAULT_VIDEO_MODEL = "jimeng-video-3.5-pro";
 
 // 草稿版本
 export const DRAFT_VERSION = "3.3.8";
+export const DRAFT_VERSION_MULTI_IMAGE = "3.3.9";
 export const DRAFT_MIN_VERSION = "3.0.2";
 
 // 图像模型映射

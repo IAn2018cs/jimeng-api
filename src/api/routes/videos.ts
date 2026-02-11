@@ -38,17 +38,18 @@ export default {
                     }
                     return Number.isInteger(num) && num >= 4 && num <= 15;
                 })
-                // 限制图片URL数量最多2个
-                .validate('body.file_paths', v => _.isUndefined(v) || (_.isArray(v) && v.length <= 2))
-                .validate('body.filePaths', v => _.isUndefined(v) || (_.isArray(v) && v.length <= 2))
+                // 限制图片URL数量最多5个（Seedance 2.0 多图模式支持3-5张）
+                .validate('body.file_paths', v => _.isUndefined(v) || (_.isArray(v) && v.length <= 5))
+                .validate('body.filePaths', v => _.isUndefined(v) || (_.isArray(v) && v.length <= 5))
                 .validate('body.response_format', v => _.isUndefined(v) || _.isString(v))
+                .validate('body.image_mode', v => _.isUndefined(v) || (_.isString(v) && ['keyframe', 'reference'].includes(v)))
                 .validate('body.async', v => _.isUndefined(v) || _.isBoolean(v))
                 .validate('headers.authorization', _.isString);
 
-            // 限制上传文件数量最多2个
+            // 限制上传文件数量最多5个（Seedance 2.0 多图模式支持3-5张）
             const uploadedFiles = request.files ? _.values(request.files) : [];
-            if (uploadedFiles.length > 2) {
-                throw new Error('最多只能上传2个图片文件');
+            if (uploadedFiles.length > 5) {
+                throw new Error('最多只能上传5个图片文件');
             }
 
             // refresh_token切分
@@ -64,6 +65,7 @@ export default {
                 duration = 5,
                 file_paths = [],
                 filePaths = [],
+                image_mode = "keyframe",
                 response_format = "url",
                 async: isAsync = false
             } = request.body;
@@ -80,13 +82,13 @@ export default {
             if (isAsync) {
                 const taskId = taskStore.createTask({
                     model, prompt, ratio, resolution,
-                    duration: finalDuration, filePaths: finalFilePaths
+                    duration: finalDuration, filePaths: finalFilePaths, image_mode
                 });
 
                 // 后台启动任务（不 await）
                 submitVideoTaskAsync(
                     taskId, model, prompt,
-                    { ratio, resolution, duration: finalDuration, filePaths: finalFilePaths, files: request.files },
+                    { ratio, resolution, duration: finalDuration, filePaths: finalFilePaths, files: request.files, imageMode: image_mode },
                     token
                 ).catch(err => {
                     logger.error(`异步任务 ${taskId} 未捕获异常: ${err.message}`);
@@ -110,6 +112,7 @@ export default {
                     duration: finalDuration,
                     filePaths: finalFilePaths,
                     files: request.files, // 传递上传的文件
+                    imageMode: image_mode,
                 },
                 token
             );
