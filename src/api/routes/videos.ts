@@ -7,6 +7,7 @@ import { generateVideo, submitVideoTaskAsync, queryVideoTask, DEFAULT_MODEL } fr
 import APIException from '@/lib/exceptions/APIException.ts';
 import EX from '@/api/consts/exceptions.ts';
 import taskStore from '@/lib/task-store.ts';
+import taskQueue from '@/lib/task-queue.ts';
 import util from '@/lib/util.ts';
 import logger from '@/lib/logger.ts';
 
@@ -88,14 +89,14 @@ export default {
                     duration: finalDuration, filePaths: finalFilePaths, image_mode
                 });
 
-                // 后台启动任务（不 await）
-                submitVideoTaskAsync(
-                    taskId, model, prompt,
-                    { ratio, resolution, duration: finalDuration, filePaths: finalFilePaths, files: request.files, imageMode: image_mode },
-                    token
-                ).catch(err => {
-                    logger.error(`异步任务 ${taskId} 未捕获异常: ${err.message}`);
-                });
+                // 加入并发队列（最多同时执行 5 个任务）
+                taskQueue.enqueue(taskId, () =>
+                    submitVideoTaskAsync(
+                        taskId, model, prompt,
+                        { ratio, resolution, duration: finalDuration, filePaths: finalFilePaths, files: request.files, imageMode: image_mode },
+                        token
+                    )
+                );
 
                 return {
                     task_id: taskId,
@@ -168,6 +169,10 @@ export default {
                     progress_text: task.progress_text,
                     poll_count: task.poll_count,
                     elapsed_seconds: task.elapsed_seconds,
+                },
+                queue: {
+                    pending: taskQueue.pendingCount,
+                    running: taskQueue.runningCount,
                 },
                 created_at: task.created_at,
                 updated_at: task.updated_at,
