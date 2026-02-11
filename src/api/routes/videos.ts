@@ -30,9 +30,8 @@ export default {
                     if (_.isUndefined(v)) return true;
                     // 支持的时长范围: 4~15 (seedance 2.0 支持任意整数秒)
                     let num: number;
-                    if (typeof v === 'string') {
+                    if (isMultiPart && typeof v === 'string') {
                         num = parseInt(v);
-                        if (isNaN(num)) return false;
                     } else if (_.isFinite(v)) {
                         num = v as number;
                     } else {
@@ -40,18 +39,26 @@ export default {
                     }
                     return Number.isInteger(num) && num >= 4 && num <= 15;
                 })
-                // 限制图片URL数量最多5个（Seedance 2.0 多图模式支持3-5张）
-                .validate('body.file_paths', v => _.isUndefined(v) || (_.isArray(v) && v.length <= 5))
-                .validate('body.filePaths', v => _.isUndefined(v) || (_.isArray(v) && v.length <= 5))
+                // 限制图片URL数量最多2个
+                .validate('body.file_paths', v => _.isUndefined(v) || (_.isArray(v) && v.length <= 2))
+                .validate('body.filePaths', v => _.isUndefined(v) || (_.isArray(v) && v.length <= 2))
+                .validate('body.functionMode', v => _.isUndefined(v) || (_.isString(v) && ['first_last_frames', 'omni_reference'].includes(v)))
                 .validate('body.response_format', v => _.isUndefined(v) || _.isString(v))
-                .validate('body.image_mode', v => _.isUndefined(v) || (_.isString(v) && ['keyframe', 'reference'].includes(v)))
                 .validate('body.async', v => _.isUndefined(v) || _.isBoolean(v) || (isMultiPart && (v === 'true' || v === 'false')))
                 .validate('headers.authorization', _.isString);
 
-            // 限制上传文件数量最多5个（Seedance 2.0 参考模式支持3-5个文件，包括图片和视频）
+            const functionMode = request.body.functionMode || 'first_last_frames';
+            const isOmniMode = functionMode === 'omni_reference';
+
+            // omni_reference 模式最多3个文件 (2图片+1视频)，普通模式最多2个
             const uploadedFiles = request.files ? _.values(request.files) : [];
-            if (uploadedFiles.length > 5) {
-                throw new Error('最多只能上传5个文件');
+            const maxFiles = isOmniMode ? 3 : 2;
+            if (uploadedFiles.length > maxFiles) {
+                throw new Error(isOmniMode ? '全能模式最多上传3个文件(2图片+1视频)' : '最多只能上传2个图片文件');
+            }
+            // omni_reference 模式至少需要上传1个素材文件
+            if (isOmniMode && uploadedFiles.length === 0) {
+                throw new Error('全能模式(omni_reference)至少需要上传1个素材文件(图片或视频)');
             }
 
             // refresh_token切分
@@ -67,13 +74,12 @@ export default {
                 duration = 5,
                 file_paths = [],
                 filePaths = [],
-                image_mode = "keyframe",
                 response_format = "url",
                 async: isAsync = false
             } = request.body;
 
-            // 将字符串类型的 duration 转换为数字
-            const finalDuration = typeof duration === 'string'
+            // 如果是 multipart/form-data，需要将字符串转换为数字
+            const finalDuration = isMultiPart && typeof duration === 'string'
                 ? parseInt(duration)
                 : duration;
             const finalAsync = isMultiPart && typeof isAsync === 'string'
@@ -87,14 +93,14 @@ export default {
             if (finalAsync) {
                 const taskId = taskStore.createTask({
                     model, prompt, ratio, resolution,
-                    duration: finalDuration, filePaths: finalFilePaths, image_mode
+                    duration: finalDuration, filePaths: finalFilePaths, functionMode
                 });
 
                 // 加入并发队列（最多同时执行 5 个任务）
                 taskQueue.enqueue(taskId, () =>
                     submitVideoTaskAsync(
                         taskId, model, prompt,
-                        { ratio, resolution, duration: finalDuration, filePaths: finalFilePaths, files: request.files, imageMode: image_mode },
+                        { ratio, resolution, duration: finalDuration, filePaths: finalFilePaths, files: request.files, functionMode },
                         token
                     )
                 );
@@ -107,7 +113,7 @@ export default {
                 };
             }
 
-            // === 同步模式（原有逻辑不变） ===
+            // === 同步模式 ===
             const videoUrl = await generateVideo(
                 model,
                 prompt,
@@ -116,8 +122,8 @@ export default {
                     resolution,
                     duration: finalDuration,
                     filePaths: finalFilePaths,
-                    files: request.files, // 传递上传的文件
-                    imageMode: image_mode,
+                    files: request.files,
+                    functionMode,
                 },
                 token
             );

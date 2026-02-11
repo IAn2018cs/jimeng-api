@@ -36,9 +36,9 @@
 | `async`           | boolean  | 否   | `false`                  | **设为 `true` 启用异步模式**                       |
 | `ratio`           | string   | 否   | `"1:1"`                  | 视频比例（图生视频时被输入图片比例覆盖）            |
 | `duration`        | number   | 否   | `5`                      | 视频时长（秒），seedance-2.0 支持 4~15 任意整数秒   |
-| `file_paths`      | string[] | 否   | `[]`                     | 素材 URL 数组，最多5个（支持图片和视频URL）          |
+| `file_paths`      | string[] | 否   | `[]`                     | 图片 URL 数组，最多2个（仅 first_last_frames 模式） |
 | `filePaths`       | string[] | 否   | `[]`                     | 同 `file_paths`，兼容驼峰命名                      |
-| `image_mode`      | string   | 否   | `"keyframe"`             | 素材模式：`keyframe`=首尾帧，`reference`=参考模式（仅 seedance-2.0，支持图片+视频混合） |
+| `functionMode`    | string   | 否   | `"first_last_frames"`    | 生成模式：`first_last_frames`=首尾帧，`omni_reference`=全能参考模式（仅 seedance-2.0） |
 
 ### `ratio` 可选值
 
@@ -55,9 +55,11 @@
 
 支持 **4~15 任意整数秒**，默认 `5` 秒。
 
-### 图片/视频输入说明
+---
 
-**首尾帧模式**（`image_mode: "keyframe"`，默认）：
+## 生成模式说明
+
+### 首尾帧模式（`functionMode: "first_last_frames"`，默认）
 
 | 图片数量 | 模式             | 说明                                    |
 |----------|------------------|-----------------------------------------|
@@ -65,22 +67,34 @@
 | 1 张     | 图生视频         | 图片作为首帧                             |
 | 2 张     | 首尾帧视频       | 第1张=首帧，第2张=尾帧                   |
 
-**参考模式**（`image_mode: "reference"`，仅 seedance-2.0）：
+支持通过 `file_paths`（URL 数组）或 `multipart/form-data` 上传本地文件。
 
-| 素材数量 | 说明                                                                      |
-|----------|---------------------------------------------------------------------------|
-| 1~5 个   | 图片或视频作为参考素材，prompt 中用 `@1` `@2` 等引用具体素材               |
+### 全能参考模式（`functionMode: "omni_reference"`，仅 seedance-2.0）
 
-参考模式支持**图片和视频混合参考**，系统会自动根据文件扩展名检测素材类型（支持 mp4/mov/avi/mkv/webm 等视频格式）。
+omni_reference 模式支持**图片和视频混合参考**，通过 `multipart/form-data` 上传文件，使用**具名字段**：
 
-prompt 支持以下占位符引用素材（从1开始编号）：
-- `@1`、`@2` — 通用引用
-- `@图1`、`@image1` — 图片引用
-- `@视频1`、`@video1` — 视频引用
+| 字段名          | 类型 | 说明                    |
+|-----------------|------|-------------------------|
+| `image_file_1`  | 文件 | 第1张参考图片（可选）    |
+| `image_file_2`  | 文件 | 第2张参考图片（可选）    |
+| `video_file`    | 文件 | 参考视频（可选，≤15秒）  |
 
-如果 prompt 中没有占位符，会自动引用所有素材。
+**限制：**
+- 至少上传 1 个文件，最多 3 个文件（2图片 + 1视频）
+- **不支持** `file_paths` URL 方式，仅支持 multipart 上传
+- 视频时长不超过 15 秒
 
-可通过 `file_paths`（URL 数组）或 `multipart/form-data` 上传本地文件（任意字段名）。两种方式同时提供时，优先使用本地文件。
+**prompt 中引用素材：**
+
+使用 `@字段名` 或 `@原始文件名` 引用已上传的素材：
+
+```
+@image_file_1作为首帧，@image_file_2作为尾帧，运动动作模仿@video_file
+```
+
+如果 prompt 中没有 `@` 引用，整个 prompt 作为纯文本描述。
+
+---
 
 ### 请求示例
 
@@ -118,66 +132,27 @@ curl -X POST http://localhost:5100/v1/videos/generations \
   -F "async=true" \
   -F "image=@/path/to/flower.jpg"
 
-# 多图参考模式（使用 @1 @2 引用图片）
-curl -X POST http://localhost:5100/v1/videos/generations \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer YOUR_SESSION_ID" \
-  -d '{
-    "model": "jimeng-video-seedance-2.0",
-    "prompt": "@1 的角色走进 @2 的场景，然后看到 @3 的物体",
-    "duration": 8,
-    "image_mode": "reference",
-    "file_paths": [
-      "https://example.com/character.jpg",
-      "https://example.com/scene.jpg",
-      "https://example.com/object.jpg"
-    ],
-    "async": true
-  }'
-
-# 多图参考模式（不使用占位符，自动引用所有图片）
-curl -X POST http://localhost:5100/v1/videos/generations \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer YOUR_SESSION_ID" \
-  -d '{
-    "model": "jimeng-video-seedance-2.0",
-    "prompt": "这些元素组合成一个动画视频",
-    "duration": 6,
-    "image_mode": "reference",
-    "file_paths": [
-      "https://example.com/img1.jpg",
-      "https://example.com/img2.jpg",
-      "https://example.com/img3.jpg"
-    ],
-    "async": true
-  }'
-
-# 视频参考模式（使用视频URL作为参考素材）
-curl -X POST http://localhost:5100/v1/videos/generations \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer YOUR_SESSION_ID" \
-  -d '{
-    "model": "jimeng-video-seedance-2.0",
-    "prompt": "@1 的角色在 @2 的运动风格下跳舞",
-    "duration": 10,
-    "image_mode": "reference",
-    "file_paths": [
-      "https://example.com/character.jpg",
-      "https://example.com/dance_clip.mp4"
-    ],
-    "async": true
-  }'
-
-# 本地视频+图片混合上传（multipart/form-data）
+# 全能参考模式（omni_reference）— 图片+视频混合
 curl -X POST http://localhost:5100/v1/videos/generations \
   -H "Authorization: Bearer YOUR_SESSION_ID" \
   -F "model=jimeng-video-seedance-2.0" \
-  -F "prompt=使用@1角色和@2动作生成视频" \
+  -F "prompt=@image_file_1作为角色，运动风格模仿@video_file" \
+  -F "functionMode=omni_reference" \
   -F "duration=8" \
-  -F "image_mode=reference" \
   -F "async=true" \
-  -F "image1=@/path/to/character.jpg" \
-  -F "video1=@/path/to/action.mp4"
+  -F "image_file_1=@/path/to/character.jpg" \
+  -F "video_file=@/path/to/dance.mp4"
+
+# 全能参考模式 — 双图片参考
+curl -X POST http://localhost:5100/v1/videos/generations \
+  -H "Authorization: Bearer YOUR_SESSION_ID" \
+  -F "model=jimeng-video-seedance-2.0" \
+  -F "prompt=@image_file_1的角色走进@image_file_2的场景" \
+  -F "functionMode=omni_reference" \
+  -F "duration=10" \
+  -F "async=true" \
+  -F "image_file_1=@/path/to/character.jpg" \
+  -F "image_file_2=@/path/to/scene.jpg"
 ```
 
 ### 响应示例
@@ -386,5 +361,7 @@ for i in range(240):  # 最多 20 分钟
 2. 任务记录 **3 天后自动过期删除**，请及时获取结果
 3. 图生视频时 `ratio` 参数会被输入图片的实际比例覆盖
 4. 同一个 `task_id` 可以无限次查询，直到过期
-5. 参考模式（`image_mode: "reference"`）仅 `jimeng-video-seedance-2.0` 支持，最多5个素材（图片+视频混合）
-6. 参考模式下，prompt 中的 `@1` `@2` 等占位符对应 `file_paths` 数组中的素材顺序（从1开始），系统自动识别图片/视频类型
+5. 全能参考模式（`functionMode: "omni_reference"`）仅 `jimeng-video-seedance-2.0` 支持，通过 multipart 上传文件，使用具名字段 `image_file_1`/`image_file_2`/`video_file`
+6. 全能参考模式下，prompt 中用 `@image_file_1`/`@video_file` 等引用素材，也支持用 `@原始文件名` 引用
+7. 上传的参考视频时长不超过 15 秒，系统会自动校验
+8. 图片上传后会进行内容安全检测（仅国内站），违规内容会被拒绝
