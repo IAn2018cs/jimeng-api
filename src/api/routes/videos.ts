@@ -39,9 +39,9 @@ export default {
                     }
                     return Number.isInteger(num) && num >= 4 && num <= 15;
                 })
-                // 限制图片URL数量最多2个
-                .validate('body.file_paths', v => _.isUndefined(v) || (_.isArray(v) && v.length <= 2))
-                .validate('body.filePaths', v => _.isUndefined(v) || (_.isArray(v) && v.length <= 2))
+                // 限制文件URL数量最多3个（omni_reference 2图片+1视频）
+                .validate('body.file_paths', v => _.isUndefined(v) || (_.isArray(v) && v.length <= 3))
+                .validate('body.filePaths', v => _.isUndefined(v) || (_.isArray(v) && v.length <= 3))
                 .validate('body.functionMode', v => _.isUndefined(v) || (_.isString(v) && ['first_last_frames', 'omni_reference'].includes(v)))
                 .validate('body.response_format', v => _.isUndefined(v) || _.isString(v))
                 .validate('body.async', v => _.isUndefined(v) || _.isBoolean(v) || (isMultiPart && (v === 'true' || v === 'false')))
@@ -51,14 +51,16 @@ export default {
             const isOmniMode = functionMode === 'omni_reference';
 
             // omni_reference 模式最多3个文件 (2图片+1视频)，普通模式最多2个
-            const uploadedFiles = request.files ? _.values(request.files) : [];
+            const uploadedFiles = request.files ? _.flatten(_.values(request.files)) : [];
             const maxFiles = isOmniMode ? 3 : 2;
-            if (uploadedFiles.length > maxFiles) {
+            const bodyFilePaths = request.body.file_paths || request.body.filePaths || [];
+            const totalInputFiles = uploadedFiles.length + (Array.isArray(bodyFilePaths) ? bodyFilePaths.length : 0);
+            if (totalInputFiles > maxFiles) {
                 throw new Error(isOmniMode ? '全能模式最多上传3个文件(2图片+1视频)' : '最多只能上传2个图片文件');
             }
-            // omni_reference 模式至少需要上传1个素材文件
-            if (isOmniMode && uploadedFiles.length === 0) {
-                throw new Error('全能模式(omni_reference)至少需要上传1个素材文件(图片或视频)');
+            // omni_reference 模式至少需要1个素材文件（multipart上传或file_paths URL）
+            if (isOmniMode && totalInputFiles === 0) {
+                throw new Error('全能模式(omni_reference)至少需要提供1个素材文件(通过上传或file_paths)');
             }
 
             // refresh_token切分

@@ -244,11 +244,7 @@ async function prepareAndSubmitVideo(
       `omni_reference 模式仅支持 jimeng-video-seedance-2.0 模型`);
   }
 
-  // omni_reference 模式下不支持 URL 方式
-  if (isOmniMode && filePaths && filePaths.length > 0) {
-    throw new APIException(EX.API_REQUEST_FAILED,
-      `omni_reference 模式不支持 file_paths/filePaths URL 参数，请通过 multipart 上传文件 (image_file_1, image_file_2, video_file)`);
-  }
+  // omni_reference 模式: 支持 multipart 上传和 file_paths URL，从文件类型自动判断图片/视频
 
   let requestData: any;
 
@@ -256,84 +252,152 @@ async function prepareAndSubmitVideo(
     // ========== omni_reference 分支 ==========
     logger.info(`进入 omni_reference 全能模式`);
 
-    // 按字段名取出具名文件
-    const imageFile1 = files?.image_file_1;
-    const imageFile2 = files?.image_file_2;
-    const videoFile = files?.video_file;
-
-    if (!imageFile1 && !imageFile2 && !videoFile) {
-      throw new APIException(EX.API_REQUEST_FAILED,
-        `omni_reference 模式需要至少上传一个素材文件 (image_file_1, image_file_2, video_file)`);
+    // 从文件扩展名/MIME类型判断文件类型
+    const VIDEO_EXTS = new Set(['mp4', 'mov', 'avi', 'mkv', 'webm', 'flv', 'wmv', 'm4v']);
+    function getFileTypeFromName(filename: string): "image" | "video" {
+      const ext = (filename || '').toLowerCase().split('.').pop() || '';
+      return VIDEO_EXTS.has(ext) ? 'video' : 'image';
     }
 
-    // 素材注册表: fieldName → { idx, type, uploadResult }
+    // 素材注册表
     interface MaterialEntry {
       idx: number;
       type: "image" | "video";
-      fieldName: string;
+      refName: string;
       originalFilename: string;
       imageUri?: string;
       videoResult?: VideoUploadResult;
     }
     const materialRegistry: Map<string, MaterialEntry> = new Map();
     let materialIdx = 0;
+    let imageCount = 0;
+    let videoCount = 0;
 
-    // canonical key 集合，防止 originalFilename 覆盖
-    const canonicalKeys = new Set(["image_file_1", "image_file_2", "video_file"]);
-    // 安全注册别名：originalFilename 不与 canonical key 冲突时才注册
-    function registerAlias(filename: string, entry: MaterialEntry) {
-      if (!canonicalKeys.has(filename) && !materialRegistry.has(filename)) {
-        materialRegistry.set(filename, entry);
+    // 处理 multipart 上传的文件
+    // 兼容两种方式：
+    //   1. 旧版具名字段: image_file_1, image_file_2, video_file（类型由字段名决定）
+    //   2. 通用字段名: file_paths 或任意字段名（类型由文件扩展名/MIME自动判断）
+    const LEGACY_IMAGE_FIELDS = new Set(['image_file_1', 'image_file_2']);
+    const LEGACY_VIDEO_FIELDS = new Set(['video_file']);
+
+    for (const [fieldName, fieldFiles] of Object.entries(files || {})) {
+      const fileList = Array.isArray(fieldFiles) ? fieldFiles : [fieldFiles];
+      for (const file of fileList) {
+        if (!file) continue;
+
+        let refName: string;
+        let fileType: "image" | "video";
+
+        if (LEGACY_IMAGE_FIELDS.has(fieldName)) {
+          // 旧版具名字段: 用字段名作为引用名，类型由字段名决定
+          refName = fieldName;
+          fileType = 'image';
+        } else if (LEGACY_VIDEO_FIELDS.has(fieldName)) {
+          refName = fieldName;
+          fileType = 'video';
+        } else {
+          // 通用字段名: 自动编号 file_1, file_2, ...，类型从 MIME/扩展名判断
+          refName = `file_${materialIdx + 1}`;
+          fileType = file.mimetype?.startsWith('video/') ? 'video' as const
+                   : file.mimetype?.startsWith('image/') ? 'image' as const
+                   : getFileTypeFromName(file.originalFilename);
+        }
+
+      if (fileType === 'video') {
+        videoCount++;
+        if (videoCount > 1) throw new APIException(EX.API_REQUEST_FAILED, `最多只能上传1个视频文件`);
+
+        try {
+          logger.info(`[omni] 上传视频 ${refName}: ${file.originalFilename}`);
+          const buf = await fs.readFile(file.filepath);
+          const vResult = await uploadVideoBuffer(buf, refreshToken, regionInfo);
+          const entry: MaterialEntry = { idx: materialIdx++, type: "video", refName, originalFilename: file.originalFilename, videoResult: vResult };
+          materialRegistry.set(refName, entry);
+          if (file.originalFilename && file.originalFilename !== refName) {
+            materialRegistry.set(file.originalFilename, entry);
+          }
+          logger.info(`[omni] ${refName} 视频上传成功: vid=${vResult.vid}, ${vResult.videoMeta.width}x${vResult.videoMeta.height}, ${vResult.videoMeta.duration}s`);
+        } catch (error: any) {
+          throw new APIException(EX.API_REQUEST_FAILED, `视频文件 ${file.originalFilename} 处理失败: ${error.message}`);
+        }
+      } else {
+        imageCount++;
+        if (imageCount > 2) throw new APIException(EX.API_REQUEST_FAILED, `最多只能上传2张图片`);
+
+        try {
+          logger.info(`[omni] 上传图片 ${refName}: ${file.originalFilename}`);
+          const buf = await fs.readFile(file.filepath);
+          const uri = await uploadImageBuffer(buf, refreshToken, regionInfo);
+          await checkImageContent(uri, refreshToken, regionInfo);
+          const entry: MaterialEntry = { idx: materialIdx++, type: "image", refName, originalFilename: file.originalFilename, imageUri: uri };
+          materialRegistry.set(refName, entry);
+          if (file.originalFilename && file.originalFilename !== refName) {
+            materialRegistry.set(file.originalFilename, entry);
+          }
+          logger.info(`[omni] ${refName} 图片上传成功: ${uri}`);
+        } catch (error: any) {
+          throw new APIException(EX.API_REQUEST_FAILED, `图片文件 ${file.originalFilename} 处理失败: ${error.message}`);
+        }
+      }
       }
     }
 
-    // 串行上传素材
-    if (imageFile1) {
-      try {
-        logger.info(`[omni] 上传 image_file_1: ${imageFile1.originalFilename}`);
-        const buf = await fs.readFile(imageFile1.filepath);
-        const uri = await uploadImageBuffer(buf, refreshToken, regionInfo);
-        await checkImageContent(uri, refreshToken, regionInfo);
-        const entry: MaterialEntry = { idx: materialIdx++, type: "image", fieldName: "image_file_1", originalFilename: imageFile1.originalFilename, imageUri: uri };
-        materialRegistry.set("image_file_1", entry);
-        registerAlias(imageFile1.originalFilename, entry);
-        logger.info(`[omni] image_file_1 上传成功: ${uri}`);
-      } catch (error: any) {
-        throw new APIException(EX.API_REQUEST_FAILED, `image_file_1 处理失败: ${error.message}`);
+    // 处理 file_paths URL（从URL扩展名自动判断图片/视频）
+    if (filePaths && filePaths.length > 0) {
+      for (const fileUrl of filePaths) {
+        if (!fileUrl) continue;
+        const urlFilename = decodeURIComponent(new URL(fileUrl).pathname.split('/').pop() || '');
+        const fileType = getFileTypeFromName(urlFilename || fileUrl);
+        const refName = `file_${materialIdx + 1}`;
+
+        if (fileType === 'video') {
+          videoCount++;
+          if (videoCount > 1) throw new APIException(EX.API_REQUEST_FAILED, `最多只能上传1个视频文件`);
+
+          try {
+            logger.info(`[omni] 从URL下载并上传视频 ${refName}: ${fileUrl}`);
+            const response = await axios.get(fileUrl, { responseType: 'arraybuffer', proxy: false });
+            if (response.status < 200 || response.status >= 300) {
+              throw new Error(`下载视频失败: ${response.status}`);
+            }
+            const vResult = await uploadVideoBuffer(response.data, refreshToken, regionInfo);
+            const entry: MaterialEntry = { idx: materialIdx++, type: "video", refName, originalFilename: urlFilename || refName, videoResult: vResult };
+            materialRegistry.set(refName, entry);
+            if (urlFilename && urlFilename !== refName) {
+              materialRegistry.set(urlFilename, entry);
+            }
+            logger.info(`[omni] ${refName} 视频上传成功: vid=${vResult.vid}`);
+          } catch (error: any) {
+            throw new APIException(EX.API_REQUEST_FAILED, `视频URL ${fileUrl} 处理失败: ${error.message}`);
+          }
+        } else {
+          imageCount++;
+          if (imageCount > 2) throw new APIException(EX.API_REQUEST_FAILED, `最多只能上传2张图片`);
+
+          try {
+            logger.info(`[omni] 从URL下载并上传图片 ${refName}: ${fileUrl}`);
+            const uri = await uploadImageFromUrl(fileUrl, refreshToken, regionInfo);
+            await checkImageContent(uri, refreshToken, regionInfo);
+            const entry: MaterialEntry = { idx: materialIdx++, type: "image", refName, originalFilename: urlFilename || refName, imageUri: uri };
+            materialRegistry.set(refName, entry);
+            if (urlFilename && urlFilename !== refName) {
+              materialRegistry.set(urlFilename, entry);
+            }
+            logger.info(`[omni] ${refName} 图片上传成功: ${uri}`);
+          } catch (error: any) {
+            throw new APIException(EX.API_REQUEST_FAILED, `图片URL ${fileUrl} 处理失败: ${error.message}`);
+          }
+        }
       }
     }
 
-    if (imageFile2) {
-      try {
-        logger.info(`[omni] 上传 image_file_2: ${imageFile2.originalFilename}`);
-        const buf = await fs.readFile(imageFile2.filepath);
-        const uri = await uploadImageBuffer(buf, refreshToken, regionInfo);
-        await checkImageContent(uri, refreshToken, regionInfo);
-        const entry: MaterialEntry = { idx: materialIdx++, type: "image", fieldName: "image_file_2", originalFilename: imageFile2.originalFilename, imageUri: uri };
-        materialRegistry.set("image_file_2", entry);
-        registerAlias(imageFile2.originalFilename, entry);
-        logger.info(`[omni] image_file_2 上传成功: ${uri}`);
-      } catch (error: any) {
-        throw new APIException(EX.API_REQUEST_FAILED, `image_file_2 处理失败: ${error.message}`);
-      }
-    }
-
-    if (videoFile) {
-      try {
-        logger.info(`[omni] 上传 video_file: ${videoFile.originalFilename}`);
-        const buf = await fs.readFile(videoFile.filepath);
-        const vResult = await uploadVideoBuffer(buf, refreshToken, regionInfo);
-        const entry: MaterialEntry = { idx: materialIdx++, type: "video", fieldName: "video_file", originalFilename: videoFile.originalFilename, videoResult: vResult };
-        materialRegistry.set("video_file", entry);
-        registerAlias(videoFile.originalFilename, entry);
-        logger.info(`[omni] video_file 上传成功: vid=${vResult.vid}, ${vResult.videoMeta.width}x${vResult.videoMeta.height}, ${vResult.videoMeta.duration}s`);
-      } catch (error: any) {
-        throw new APIException(EX.API_REQUEST_FAILED, `video_file 处理失败: ${error.message}`);
-      }
+    if (materialIdx === 0) {
+      throw new APIException(EX.API_REQUEST_FAILED,
+        `omni_reference 模式需要至少提供一个素材文件`);
     }
 
     // 构建 material_list（按注册顺序）
-    const orderedEntries = [...new Map([...materialRegistry].filter(([k, v]) => k === v.fieldName)).values()]
+    const orderedEntries = [...new Map([...materialRegistry].filter(([k, v]) => k === v.refName)).values()]
       .sort((a, b) => a.idx - b.idx);
 
     const material_list: any[] = [];
@@ -504,7 +568,7 @@ async function prepareAndSubmitVideo(
     let uploadIDs: string[] = [];
 
     // 优先处理本地上传的文件
-    const uploadedFiles = _.values(files);
+    const uploadedFiles = _.flatten(_.values(files)).filter(Boolean);
     if (uploadedFiles && uploadedFiles.length > 0) {
       logger.info(`检测到 ${uploadedFiles.length} 个本地上传文件，优先处理`);
       for (let i = 0; i < uploadedFiles.length; i++) {
