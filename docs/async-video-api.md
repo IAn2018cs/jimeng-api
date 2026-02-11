@@ -36,7 +36,7 @@
 | `async`           | boolean  | 否   | `false`                  | **设为 `true` 启用异步模式**                       |
 | `ratio`           | string   | 否   | `"1:1"`                  | 视频比例（图生视频时被输入图片比例覆盖）            |
 | `duration`        | number   | 否   | `5`                      | 视频时长（秒），seedance-2.0 支持 4~15 任意整数秒   |
-| `file_paths`      | string[] | 否   | `[]`                     | 图片/视频 URL 数组，首尾帧模式最多2个，全能模式最多3个 |
+| `file_paths`      | string[] | 否   | `[]`                     | 图片/视频 URL 数组，首尾帧模式最多2个，全能模式最多12个(9图片+3视频) |
 | `filePaths`       | string[] | 否   | `[]`                     | 同 `file_paths`，兼容驼峰命名                      |
 | `functionMode`    | string   | 否   | `"first_last_frames"`    | 生成模式：`first_last_frames`=首尾帧，`omni_reference`=全能参考模式（仅 seedance-2.0） |
 
