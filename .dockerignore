@@ -45,6 +45,10 @@ jest.config.*
 *.config.js
 *.config.ts
 
+# 挂载目录（运行时数据，不需要打包进镜像）
+tmp
+data
+
 # 临时文件
 *.tmp
 *.temp
