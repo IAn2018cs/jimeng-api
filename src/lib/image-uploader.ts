@@ -240,6 +240,222 @@ export async function uploadImageBuffer(
 }
 
 /**
+ * 上传视频Buffer到VOD
+ * 使用 vod.bytedanceapi.com 的 ApplyUploadInner / CommitUploadInner 流程
+ * @param videoBuffer 视频数据
+ * @param refreshToken 刷新令牌
+ * @param regionInfo 区域信息
+ * @returns 视频URI
+ */
+export async function uploadVideoBuffer(
+  videoBuffer: ArrayBuffer | Buffer,
+  refreshToken: string,
+  regionInfo: RegionInfo
+): Promise<string> {
+  try {
+    logger.info(`开始上传视频Buffer... (isInternational: ${regionInfo.isInternational})`);
+
+    // 第一步：获取上传令牌
+    const tokenResult = await request("post", "/mweb/v1/get_upload_token", refreshToken, {
+      data: {
+        scene: 2,
+      },
+    });
+
+    const { access_key_id, secret_access_key, session_token } = tokenResult;
+
+    if (!access_key_id || !secret_access_key || !session_token) {
+      throw new Error("获取上传令牌失败");
+    }
+
+    logger.info(`获取视频上传令牌成功`);
+
+    // 准备文件信息
+    const fileSize = videoBuffer.byteLength;
+    const crc32 = util.calculateCRC32(videoBuffer as ArrayBuffer);
+    logger.info(`视频Buffer: 大小=${fileSize}字节, CRC32=${crc32}`);
+
+    // 第二步：申请视频上传权限（VOD API）
+    const now = new Date();
+    const timestamp = now.toISOString().replace(/[:\-]/g, '').replace(/\.\d{3}Z$/, 'Z');
+    const randomStr = Math.random().toString(36).substring(2, 12);
+
+    const vodUrlHost = RegionUtils.getVodUrl(regionInfo);
+    const applyUrl = `${vodUrlHost}/?Action=ApplyUploadInner&Version=2020-11-19&SpaceName=dreamina&FileType=video&IsInner=1&FileSize=${fileSize}&s=${randomStr}`;
+
+    const awsRegion = RegionUtils.getAWSRegion(regionInfo);
+    const origin = RegionUtils.getOrigin(regionInfo);
+
+    const requestHeaders = {
+      'x-amz-date': timestamp,
+      'x-amz-security-token': session_token
+    };
+
+    const authorization = createSignature('GET', applyUrl, requestHeaders, access_key_id, secret_access_key, session_token, '', awsRegion, 'vod');
+
+    logger.info(`申请视频上传权限: ${applyUrl}`);
+
+    let applyResponse;
+    try {
+      applyResponse = await axios({
+        method: 'GET',
+        url: applyUrl,
+        headers: {
+          'accept': '*/*',
+          'accept-language': 'zh-CN,zh;q=0.9',
+          'authorization': authorization,
+          'origin': origin,
+          'referer': `${origin}/`,
+          'sec-fetch-dest': 'empty',
+          'sec-fetch-mode': 'cors',
+          'sec-fetch-site': 'cross-site',
+          'user-agent': 'Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Mobile Safari/537.36',
+          'x-amz-date': timestamp,
+          'x-amz-security-token': session_token,
+        },
+        validateStatus: () => true,
+      });
+    } catch (fetchError: any) {
+      logger.error(`VOD申请上传请求失败，目标URL: ${applyUrl}`);
+      logger.error(`错误详情: ${fetchError.message}`);
+      throw new Error(`视频上传网络请求失败 (${vodUrlHost}): ${fetchError.message}. 请检查网络连接`);
+    }
+
+    if (applyResponse.status < 200 || applyResponse.status >= 300) {
+      const errorText = typeof applyResponse.data === 'string' ? applyResponse.data : JSON.stringify(applyResponse.data);
+      throw new Error(`申请视频上传权限失败: ${applyResponse.status} - ${errorText}`);
+    }
+
+    const applyResult = applyResponse.data;
+
+    if (applyResult?.ResponseMetadata?.Error) {
+      throw new Error(`申请视频上传权限失败: ${JSON.stringify(applyResult.ResponseMetadata.Error)}`);
+    }
+
+    logger.info(`申请视频上传权限成功`);
+
+    // 解析上传信息
+    const uploadAddress = applyResult?.Result?.UploadAddress;
+    if (!uploadAddress || !uploadAddress.StoreInfos || !uploadAddress.UploadHosts) {
+      throw new Error(`获取视频上传地址失败: ${JSON.stringify(applyResult)}`);
+    }
+
+    const storeInfo = uploadAddress.StoreInfos[0];
+    const uploadHost = uploadAddress.UploadHosts[0];
+    const auth = storeInfo.Auth;
+    const storeUri = storeInfo.StoreUri;
+    const uploadUrl = `https://${uploadHost}/upload/v1/${storeUri}`;
+
+    logger.info(`准备上传视频: uploadUrl=${uploadUrl}`);
+
+    // 第三步：上传视频文件
+    let uploadResponse;
+    try {
+      uploadResponse = await axios({
+        method: 'POST',
+        url: uploadUrl,
+        headers: {
+          'Accept': '*/*',
+          'Accept-Language': 'zh-CN,zh;q=0.9',
+          'Authorization': auth,
+          'Connection': 'keep-alive',
+          'Content-CRC32': crc32,
+          'Content-Disposition': 'attachment; filename="undefined"',
+          'Content-Type': 'application/octet-stream',
+          'Origin': origin,
+          'Referer': `${origin}/`,
+          'Sec-Fetch-Dest': 'empty',
+          'Sec-Fetch-Mode': 'cors',
+          'Sec-Fetch-Site': 'cross-site',
+          'User-Agent': 'Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Mobile Safari/537.36',
+        },
+        data: videoBuffer,
+        maxContentLength: Infinity,
+        maxBodyLength: Infinity,
+        validateStatus: () => true,
+      });
+    } catch (fetchError: any) {
+      logger.error(`视频文件上传请求失败，目标URL: ${uploadUrl}`);
+      logger.error(`错误详情: ${fetchError.message}`);
+      throw new Error(`视频上传网络请求失败 (${uploadHost}): ${fetchError.message}. 请检查网络连接`);
+    }
+
+    if (uploadResponse.status < 200 || uploadResponse.status >= 300) {
+      const errorText = typeof uploadResponse.data === 'string' ? uploadResponse.data : JSON.stringify(uploadResponse.data);
+      throw new Error(`视频上传失败: ${uploadResponse.status} - ${errorText}`);
+    }
+
+    logger.info(`视频文件上传成功`);
+
+    // 第四步：提交上传（CommitUploadInner）
+    const commitUrl = `${vodUrlHost}/?Action=CommitUploadInner&Version=2020-11-19&SpaceName=dreamina`;
+    const commitTimestamp = new Date().toISOString().replace(/[:\-]/g, '').replace(/\.\d{3}Z$/, 'Z');
+    const commitPayload = JSON.stringify({
+      SessionKey: uploadAddress.SessionKey
+    });
+
+    const payloadHash = crypto.createHash('sha256').update(commitPayload, 'utf8').digest('hex');
+
+    const commitRequestHeaders = {
+      'x-amz-date': commitTimestamp,
+      'x-amz-security-token': session_token,
+      'x-amz-content-sha256': payloadHash
+    };
+
+    const commitAuthorization = createSignature('POST', commitUrl, commitRequestHeaders, access_key_id, secret_access_key, session_token, commitPayload, awsRegion, 'vod');
+
+    let commitResponse;
+    try {
+      commitResponse = await axios({
+        method: 'POST',
+        url: commitUrl,
+        headers: {
+          'accept': '*/*',
+          'accept-language': 'zh-CN,zh;q=0.9',
+          'authorization': commitAuthorization,
+          'content-type': 'application/json',
+          'origin': origin,
+          'referer': `${origin}/`,
+          'sec-fetch-dest': 'empty',
+          'sec-fetch-mode': 'cors',
+          'sec-fetch-site': 'cross-site',
+          'user-agent': 'Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Mobile Safari/537.36',
+          'x-amz-date': commitTimestamp,
+          'x-amz-security-token': session_token,
+          'x-amz-content-sha256': payloadHash,
+        },
+        data: commitPayload,
+        validateStatus: () => true,
+      });
+    } catch (fetchError: any) {
+      logger.error(`视频提交上传请求失败，目标URL: ${commitUrl}`);
+      logger.error(`错误详情: ${fetchError.message}`);
+      throw new Error(`视频提交上传网络请求失败 (${vodUrlHost}): ${fetchError.message}. 请检查网络连接`);
+    }
+
+    if (commitResponse.status < 200 || commitResponse.status >= 300) {
+      const errorText = typeof commitResponse.data === 'string' ? commitResponse.data : JSON.stringify(commitResponse.data);
+      throw new Error(`视频提交上传失败: ${commitResponse.status} - ${errorText}`);
+    }
+
+    const commitResult = commitResponse.data;
+
+    if (commitResult?.ResponseMetadata?.Error) {
+      throw new Error(`视频提交上传失败: ${JSON.stringify(commitResult.ResponseMetadata.Error)}`);
+    }
+
+    // VOD CommitUploadInner 返回的 URI 即为视频存储地址
+    const videoUri = storeUri;
+    logger.info(`视频上传完成: ${videoUri}`);
+
+    return videoUri;
+  } catch (error: any) {
+    logger.error(`视频Buffer上传失败: ${error.message}`);
+    throw error;
+  }
+}
+
+/**
  * 从URL下载并上传图片
  * @param imageUrl 图片URL
  * @param refreshToken 刷新令牌

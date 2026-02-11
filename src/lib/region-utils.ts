@@ -39,6 +39,14 @@ export class RegionUtils {
   }
 
   /**
+   * 获取VOD上传URL（视频上传专用）
+   */
+  static getVodUrl(regionInfo: RegionInfo): string {
+    // 目前仅确认CN站VOD地址，国际站暂时复用CN
+    return 'https://vod.bytedanceapi.com';
+  }
+
+  /**
    * 获取Origin
    */
   static getOrigin(regionInfo: RegionInfo): string {

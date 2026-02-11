@@ -11,7 +11,7 @@ import { getCredit, receiveCredit, request, parseRegionFromToken, getAssistantId
 import logger from "@/lib/logger.ts";
 import { SmartPoller, PollingStatus } from "@/lib/smart-poller.ts";
 import { DEFAULT_ASSISTANT_ID_CN, DEFAULT_ASSISTANT_ID_US, DEFAULT_ASSISTANT_ID_HK, DEFAULT_ASSISTANT_ID_JP, DEFAULT_ASSISTANT_ID_SG, DEFAULT_VIDEO_MODEL, DRAFT_VERSION, DRAFT_VERSION_MULTI_IMAGE, VIDEO_MODEL_MAP, VIDEO_MODEL_MAP_US, VIDEO_MODEL_MAP_ASIA, STATUS_CODE_MAP } from "@/api/consts/common.ts";
-import { uploadImageBuffer } from "@/lib/image-uploader.ts";
+import { uploadImageBuffer, uploadVideoBuffer } from "@/lib/image-uploader.ts";
 import { extractVideoUrl } from "@/lib/image-utils.ts";
 import taskStore from "@/lib/task-store.ts";
 
@@ -103,32 +103,38 @@ function getVideoBenefitType(model: string): string {
   return "basic_video_operation_vgfm_v_three";
 }
 
-// 处理本地上传的文件
-async function uploadImageFromFile(file: any, refreshToken: string, regionInfo: RegionInfo): Promise<string> {
+// 处理本地上传的文件（根据媒体类型选择上传通道）
+async function uploadMediaFromFile(file: any, mediaType: MediaType, refreshToken: string, regionInfo: RegionInfo): Promise<string> {
   try {
-    logger.info(`开始从本地文件上传视频图片: ${file.originalFilename} (路径: ${file.filepath})`);
-    const imageBuffer = await fs.readFile(file.filepath);
-    return await uploadImageBuffer(imageBuffer, refreshToken, regionInfo);
+    logger.info(`开始从本地文件上传: ${file.originalFilename} (类型: ${mediaType}, 路径: ${file.filepath})`);
+    const fileBuffer = await fs.readFile(file.filepath);
+    if (mediaType === 'video') {
+      return await uploadVideoBuffer(fileBuffer, refreshToken, regionInfo);
+    }
+    return await uploadImageBuffer(fileBuffer, refreshToken, regionInfo);
   } catch (error: any) {
-    logger.error(`从本地文件上传视频图片失败: ${error.message}`);
+    logger.error(`从本地文件上传失败: ${error.message}`);
     throw error;
   }
 }
 
-// 处理来自URL的图片
-async function uploadImageFromUrl(imageUrl: string, refreshToken: string, regionInfo: RegionInfo): Promise<string> {
+// 处理来自URL的文件（根据媒体类型选择上传通道）
+async function uploadMediaFromUrl(fileUrl: string, mediaType: MediaType, refreshToken: string, regionInfo: RegionInfo): Promise<string> {
   try {
-    logger.info(`开始从URL下载并上传视频图片: ${imageUrl}`);
-    const imageResponse = await axios.get(imageUrl, {
+    logger.info(`开始从URL下载并上传: ${fileUrl} (类型: ${mediaType})`);
+    const response = await axios.get(fileUrl, {
       responseType: 'arraybuffer',
     });
-    if (imageResponse.status < 200 || imageResponse.status >= 300) {
-      throw new Error(`下载图片失败: ${imageResponse.status}`);
+    if (response.status < 200 || response.status >= 300) {
+      throw new Error(`下载文件失败: ${response.status}`);
     }
-    const imageBuffer = imageResponse.data;
-    return await uploadImageBuffer(imageBuffer, refreshToken, regionInfo);
+    const fileBuffer = response.data;
+    if (mediaType === 'video') {
+      return await uploadVideoBuffer(fileBuffer, refreshToken, regionInfo);
+    }
+    return await uploadImageBuffer(fileBuffer, refreshToken, regionInfo);
   } catch (error: any) {
-    logger.error(`从URL上传视频图片失败: ${error.message}`);
+    logger.error(`从URL上传失败: ${error.message}`);
     throw error;
   }
 }
@@ -444,7 +450,7 @@ async function prepareAndSubmitVideo(
       try {
         const mediaType = detectMediaType(file.originalFilename || '');
         logger.info(`开始上传第 ${i + 1} 个本地文件: ${file.originalFilename} (类型: ${mediaType})`);
-        const uri = await uploadImageFromFile(file, refreshToken, regionInfo);
+        const uri = await uploadMediaFromFile(file, mediaType, refreshToken, regionInfo);
         if (uri) {
           uploadedMedias.push({ uri, mediaType });
           logger.info(`第 ${i + 1} 个本地文件上传成功: ${uri}`);
@@ -471,7 +477,7 @@ async function prepareAndSubmitVideo(
       try {
         const mediaType = detectMediaTypeFromUrl(filePath);
         logger.info(`开始上传第 ${i + 1} 个URL文件: ${filePath} (类型: ${mediaType})`);
-        const uri = await uploadImageFromUrl(filePath, refreshToken, regionInfo);
+        const uri = await uploadMediaFromUrl(filePath, mediaType, refreshToken, regionInfo);
         if (uri) {
           uploadedMedias.push({ uri, mediaType });
           logger.info(`第 ${i + 1} 个URL文件上传成功: ${uri}`);
