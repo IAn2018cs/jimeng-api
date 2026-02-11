@@ -9,9 +9,10 @@ import util from "@/lib/util.ts";
 import { getCredit, receiveCredit, request, parseRegionFromToken, getAssistantId, RegionInfo } from "./core.ts";
 import logger from "@/lib/logger.ts";
 import { SmartPoller, PollingStatus } from "@/lib/smart-poller.ts";
-import { DEFAULT_ASSISTANT_ID_CN, DEFAULT_ASSISTANT_ID_US, DEFAULT_ASSISTANT_ID_HK, DEFAULT_ASSISTANT_ID_JP, DEFAULT_ASSISTANT_ID_SG, DEFAULT_VIDEO_MODEL, DRAFT_VERSION, VIDEO_MODEL_MAP, VIDEO_MODEL_MAP_US, VIDEO_MODEL_MAP_ASIA } from "@/api/consts/common.ts";
+import { DEFAULT_ASSISTANT_ID_CN, DEFAULT_ASSISTANT_ID_US, DEFAULT_ASSISTANT_ID_HK, DEFAULT_ASSISTANT_ID_JP, DEFAULT_ASSISTANT_ID_SG, DEFAULT_VIDEO_MODEL, DRAFT_VERSION, VIDEO_MODEL_MAP, VIDEO_MODEL_MAP_US, VIDEO_MODEL_MAP_ASIA, STATUS_CODE_MAP } from "@/api/consts/common.ts";
 import { uploadImageBuffer } from "@/lib/image-uploader.ts";
 import { extractVideoUrl } from "@/lib/image-utils.ts";
+import taskStore from "@/lib/task-store.ts";
 
 export const DEFAULT_MODEL = DEFAULT_VIDEO_MODEL;
 
@@ -88,15 +89,12 @@ async function uploadImageFromUrl(imageUrl: string, refreshToken: string, region
 
 
 /**
- * 生成视频
+ * 准备参数并提交视频生成任务
+ * 包含：区域检测、模型映射、时长处理、积分检查、图片上传、构建请求、提交任务
  *
- * @param _model 模型名称
- * @param prompt 提示词
- * @param options 选项
- * @param refreshToken 刷新令牌
- * @returns 视频URL
+ * @returns historyId
  */
-export async function generateVideo(
+async function prepareAndSubmitVideo(
   _model: string,
   prompt: string,
   {
@@ -113,7 +111,7 @@ export async function generateVideo(
     files?: any;
   },
   refreshToken: string
-) {
+): Promise<string> {
   // 检测区域
   const regionInfo = parseRegionFromToken(refreshToken);
   const { isInternational } = regionInfo;
@@ -320,7 +318,7 @@ export async function generateVideo(
   }
 
   logger.info(`视频生成模式: ${uploadIDs.length}张图片 (首帧: ${!!first_frame_image}, 尾帧: ${!!end_frame_image}), resolution: ${resolution}`);
-  
+
   // 构建请求参数
   const { aigc_data } = await request(
     "post",
@@ -418,12 +416,30 @@ export async function generateVideo(
 
   logger.info(`视频生成任务已提交，history_id: ${historyId}，等待生成完成...`);
 
+  return historyId;
+}
+
+
+/**
+ * 轮询视频生成结果
+ *
+ * @param historyId 即梦 history_record_id
+ * @param refreshToken 刷新令牌
+ * @param onProgress 可选的进度回调
+ * @returns 视频URL
+ */
+async function pollVideoResult(
+  historyId: string,
+  refreshToken: string,
+  onProgress?: (status: number, progressText: string, pollCount: number, elapsedSeconds: number) => void
+): Promise<{ videoUrl: string; pollCount: number; elapsedTime: number }> {
   // 首次查询前等待，让服务器有时间处理请求
   await new Promise((resolve) => setTimeout(resolve, 5000));
 
   // 使用 SmartPoller 进行智能轮询
   const maxPollCount = 900; // 增加轮询次数，支持更长的生成时间
   let pollAttempts = 0;
+  const startTime = Date.now();
 
   const poller = new SmartPoller({
     maxPollCount,
@@ -435,6 +451,7 @@ export async function generateVideo(
 
   const { result: pollingResult, data: finalHistoryData } = await poller.poll(async () => {
     pollAttempts++;
+    const elapsedSeconds = Math.round((Date.now() - startTime) / 1000);
 
     // 使用标准API请求方式
     const result = await request("post", "/mweb/v1/get_history_by_ids", refreshToken, {
@@ -448,6 +465,7 @@ export async function generateVideo(
     const videoUrlMatch = responseStr.match(/https:\/\/v[0-9]+-artist\.vlabvod\.com\/[^"\s]+/);
     if (videoUrlMatch && videoUrlMatch[0]) {
       logger.info(`从API响应中直接提取到视频URL: ${videoUrlMatch[0]}`);
+      onProgress?.(10, STATUS_CODE_MAP[10], pollAttempts, elapsedSeconds);
       // 构造成功状态并返回
       return {
         status: {
@@ -474,6 +492,7 @@ export async function generateVideo(
     // 由于 API 存在最终一致性，早期轮询可能暂时获取不到记录，返回处理中状态继续轮询
     if (!result[historyId]) {
       logger.warn(`API未返回历史记录 (轮询第${pollAttempts}次)，historyId: ${historyId}，继续等待...`);
+      onProgress?.(20, STATUS_CODE_MAP[20], pollAttempts, elapsedSeconds);
       return {
         status: {
           status: 20, // PROCESSING
@@ -490,6 +509,9 @@ export async function generateVideo(
     const currentFailCode = historyData.fail_code;
     const currentItemList = historyData.item_list || [];
     const finishTime = historyData.task?.finish_time || 0;
+
+    // 更新进度回调
+    onProgress?.(currentStatus, STATUS_CODE_MAP[currentStatus] || 'UNKNOWN', pollAttempts, elapsedSeconds);
 
     // 记录详细信息
     if (currentItemList.length > 0) {
@@ -526,5 +548,83 @@ export async function generateVideo(
   }
 
   logger.info(`视频生成成功，URL: ${videoUrl}，总耗时: ${pollingResult.elapsedTime}秒`);
+  return { videoUrl, pollCount: pollingResult.pollCount, elapsedTime: pollingResult.elapsedTime };
+}
+
+
+/**
+ * 生成视频（同步模式）
+ *
+ * @param _model 模型名称
+ * @param prompt 提示词
+ * @param options 选项
+ * @param refreshToken 刷新令牌
+ * @returns 视频URL
+ */
+export async function generateVideo(
+  _model: string,
+  prompt: string,
+  options: {
+    ratio?: string;
+    resolution?: string;
+    duration?: number;
+    filePaths?: string[];
+    files?: any;
+  },
+  refreshToken: string
+) {
+  const historyId = await prepareAndSubmitVideo(_model, prompt, options, refreshToken);
+  const { videoUrl } = await pollVideoResult(historyId, refreshToken);
   return videoUrl;
+}
+
+
+/**
+ * 异步提交视频生成任务
+ * 提交任务后在后台轮询，结果写入数据库
+ */
+export async function submitVideoTaskAsync(
+  taskId: string,
+  _model: string,
+  prompt: string,
+  options: {
+    ratio?: string;
+    resolution?: string;
+    duration?: number;
+    filePaths?: string[];
+    files?: any;
+  },
+  refreshToken: string
+): Promise<void> {
+  try {
+    const historyId = await prepareAndSubmitVideo(_model, prompt, options, refreshToken);
+
+    // 更新任务状态为 processing
+    taskStore.updateTaskSubmitted(taskId, historyId);
+    logger.info(`异步视频任务 ${taskId} 已提交，history_id: ${historyId}，开始后台轮询...`);
+
+    // 后台轮询，通过 onProgress 回调更新数据库
+    const { videoUrl, pollCount, elapsedTime } = await pollVideoResult(
+      historyId,
+      refreshToken,
+      (status, progressText, pollCount, elapsedSeconds) => {
+        taskStore.updateTaskProgress(taskId, status, progressText, pollCount, elapsedSeconds);
+      }
+    );
+
+    // 标记任务完成
+    taskStore.completeTask(taskId, videoUrl, pollCount, elapsedTime);
+    logger.info(`异步视频任务 ${taskId} 完成，URL: ${videoUrl}`);
+  } catch (error: any) {
+    logger.error(`异步视频任务 ${taskId} 失败: ${error.message}`);
+    taskStore.failTask(taskId, error.errmsg || error.message || '未知错误');
+  }
+}
+
+
+/**
+ * 查询视频任务状态
+ */
+export function queryVideoTask(taskId: string) {
+  return taskStore.getTask(taskId);
 }

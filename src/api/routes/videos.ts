@@ -3,8 +3,12 @@ import _ from 'lodash';
 import Request from '@/lib/request/Request.ts';
 import Response from '@/lib/response/Response.ts';
 import { tokenSplit } from '@/api/controllers/core.ts';
-import { generateVideo, DEFAULT_MODEL } from '@/api/controllers/videos.ts';
+import { generateVideo, submitVideoTaskAsync, queryVideoTask, DEFAULT_MODEL } from '@/api/controllers/videos.ts';
+import APIException from '@/lib/exceptions/APIException.ts';
+import EX from '@/api/consts/exceptions.ts';
+import taskStore from '@/lib/task-store.ts';
 import util from '@/lib/util.ts';
+import logger from '@/lib/logger.ts';
 
 export default {
 
@@ -38,6 +42,7 @@ export default {
                 .validate('body.file_paths', v => _.isUndefined(v) || (_.isArray(v) && v.length <= 2))
                 .validate('body.filePaths', v => _.isUndefined(v) || (_.isArray(v) && v.length <= 2))
                 .validate('body.response_format', v => _.isUndefined(v) || _.isString(v))
+                .validate('body.async', v => _.isUndefined(v) || _.isBoolean(v))
                 .validate('headers.authorization', _.isString);
 
             // 限制上传文件数量最多2个
@@ -59,7 +64,8 @@ export default {
                 duration = 5,
                 file_paths = [],
                 filePaths = [],
-                response_format = "url"
+                response_format = "url",
+                async: isAsync = false
             } = request.body;
 
             // 如果是 multipart/form-data，需要将字符串转换为数字
@@ -70,7 +76,31 @@ export default {
             // 兼容两种参数名格式：file_paths 和 filePaths
             const finalFilePaths = filePaths.length > 0 ? filePaths : file_paths;
 
-            // 生成视频
+            // === 异步模式 ===
+            if (isAsync) {
+                const taskId = taskStore.createTask({
+                    model, prompt, ratio, resolution,
+                    duration: finalDuration, filePaths: finalFilePaths
+                });
+
+                // 后台启动任务（不 await）
+                submitVideoTaskAsync(
+                    taskId, model, prompt,
+                    { ratio, resolution, duration: finalDuration, filePaths: finalFilePaths, files: request.files },
+                    token
+                ).catch(err => {
+                    logger.error(`异步任务 ${taskId} 未捕获异常: ${err.message}`);
+                });
+
+                return {
+                    task_id: taskId,
+                    status: 'pending',
+                    message: '视频生成任务已提交，请使用 task_id 查询进度',
+                    created: util.unixTimestamp()
+                };
+            }
+
+            // === 同步模式（原有逻辑不变） ===
             const videoUrl = await generateVideo(
                 model,
                 prompt,
@@ -105,6 +135,53 @@ export default {
                     }]
                 };
             }
+        }
+
+    },
+
+    get: {
+
+        '/generations/:task_id': async (request: Request) => {
+            request.validate('headers.authorization', _.isString);
+
+            const { task_id } = request.params;
+            if (!task_id || typeof task_id !== 'string') {
+                throw new APIException(EX.API_REQUEST_PARAMS_INVALID, '缺少 task_id 参数');
+            }
+
+            const task = queryVideoTask(task_id);
+            if (!task) {
+                throw new APIException(EX.API_VIDEO_TASK_NOT_FOUND, `任务 ${task_id} 不存在或已过期`);
+            }
+
+            const response: any = {
+                task_id: task.task_id,
+                status: task.status,
+                progress: {
+                    upstream_status: task.upstream_status,
+                    progress_text: task.progress_text,
+                    poll_count: task.poll_count,
+                    elapsed_seconds: task.elapsed_seconds,
+                },
+                created_at: task.created_at,
+                updated_at: task.updated_at,
+                expires_at: task.expires_at,
+            };
+
+            if (task.status === 'completed' && task.video_url) {
+                response.data = [{
+                    url: task.video_url,
+                    revised_prompt: JSON.parse(task.request_params).prompt
+                }];
+            }
+
+            if (task.status === 'failed' && task.error_message) {
+                response.error = {
+                    message: task.error_message
+                };
+            }
+
+            return response;
         }
 
     }
