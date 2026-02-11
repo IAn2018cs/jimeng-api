@@ -619,13 +619,13 @@ async function pollVideoResult(
   await new Promise((resolve) => setTimeout(resolve, 5000));
 
   // 使用 SmartPoller 进行智能轮询
-  const maxPollCount = 900; // 增加轮询次数，支持更长的生成时间
+  const maxPollCount = 1000; // 增加轮询次数，支持更长的生成时间
   let pollAttempts = 0;
   const startTime = Date.now();
 
   const poller = new SmartPoller({
     maxPollCount,
-    pollInterval: 2000, // 2秒基础间隔
+    pollInterval: 10000, // 10秒基础间隔
     expectedItemCount: 1,
     type: 'video',
     timeoutSeconds: 1200 // 20分钟超时
