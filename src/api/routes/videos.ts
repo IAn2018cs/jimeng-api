@@ -43,7 +43,7 @@ export default {
                 .validate('body.filePaths', v => _.isUndefined(v) || (_.isArray(v) && v.length <= 5))
                 .validate('body.response_format', v => _.isUndefined(v) || _.isString(v))
                 .validate('body.image_mode', v => _.isUndefined(v) || (_.isString(v) && ['keyframe', 'reference'].includes(v)))
-                .validate('body.async', v => _.isUndefined(v) || _.isBoolean(v))
+                .validate('body.async', v => _.isUndefined(v) || _.isBoolean(v) || (isMultiPart && (v === 'true' || v === 'false')))
                 .validate('headers.authorization', _.isString);
 
             // 限制上传文件数量最多5个（Seedance 2.0 多图模式支持3-5张）
@@ -70,16 +70,19 @@ export default {
                 async: isAsync = false
             } = request.body;
 
-            // 如果是 multipart/form-data，需要将字符串转换为数字
+            // 如果是 multipart/form-data，需要将字符串转换为对应类型
             const finalDuration = isMultiPart && typeof duration === 'string'
                 ? parseInt(duration)
                 : duration;
+            const finalAsync = isMultiPart && typeof isAsync === 'string'
+                ? isAsync === 'true'
+                : isAsync;
 
             // 兼容两种参数名格式：file_paths 和 filePaths
             const finalFilePaths = filePaths.length > 0 ? filePaths : file_paths;
 
             // === 异步模式 ===
-            if (isAsync) {
+            if (finalAsync) {
                 const taskId = taskStore.createTask({
                     model, prompt, ratio, resolution,
                     duration: finalDuration, filePaths: finalFilePaths, image_mode
