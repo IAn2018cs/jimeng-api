@@ -1,6 +1,6 @@
 # 异步视频生成 API 文档
 
-本文档面向 AI Agent 调用方，说明如何使用异步模式生成视频并查询任务进度。重点介绍 `jimeng-video-seedance-2.0` 模型。
+本文档面向 AI Agent 调用方，说明如何使用异步模式生成视频并查询任务进度。重点介绍 `jimeng-video-seedance-2.0` 和 `jimeng-video-seedance-2.0-fast` 模型。
 
 ## 概述
 
@@ -31,14 +31,14 @@
 
 | 参数              | 类型     | 必填 | 默认值                   | 说明                                              |
 |-------------------|----------|------|--------------------------|---------------------------------------------------|
-| `model`           | string   | 否   | `jimeng-video-3.5-pro`   | 视频模型名称，推荐 `jimeng-video-seedance-2.0`     |
+| `model`           | string   | 否   | `jimeng-video-3.5-pro`   | 视频模型名称，推荐 `jimeng-video-seedance-2.0` 或 `jimeng-video-seedance-2.0-fast`（更快） |
 | `prompt`          | string   | 是   | -                        | 视频内容的文本描述                                 |
 | `async`           | boolean  | 否   | `false`                  | **设为 `true` 启用异步模式**                       |
 | `ratio`           | string   | 否   | `"1:1"`                  | 视频比例（图生视频时被输入图片比例覆盖）            |
-| `duration`        | number   | 否   | `5`                      | 视频时长（秒），seedance-2.0 支持 4~15 任意整数秒   |
+| `duration`        | number   | 否   | `5`                      | 视频时长（秒），seedance-2.0/2.0-fast 支持 4~15 任意整数秒 |
 | `file_paths`      | string[] | 否   | `[]`                     | 图片/视频 URL 数组，首尾帧模式最多2个，全能模式最多12个(9图片+3视频) |
 | `filePaths`       | string[] | 否   | `[]`                     | 同 `file_paths`，兼容驼峰命名                      |
-| `functionMode`    | string   | 否   | `"first_last_frames"`    | 生成模式：`first_last_frames`=首尾帧，`omni_reference`=全能参考模式（仅 seedance-2.0） |
+| `functionMode`    | string   | 否   | `"first_last_frames"`    | 生成模式：`first_last_frames`=首尾帧，`omni_reference`=全能参考模式（仅 seedance-2.0/2.0-fast） |
 
 ### `ratio` 可选值
 
@@ -51,7 +51,7 @@
 | `9:16`  | 竖屏   |
 | `21:9`  | 超宽屏 |
 
-### `duration` 取值范围（seedance-2.0）
+### `duration` 取值范围（seedance-2.0/2.0-fast）
 
 支持 **4~15 任意整数秒**，默认 `5` 秒。
 
@@ -69,7 +69,7 @@
 
 支持通过 `file_paths`（URL 数组）或 `multipart/form-data` 上传本地文件。
 
-### 全能参考模式（`functionMode: "omni_reference"`，仅 seedance-2.0）
+### 全能参考模式（`functionMode: "omni_reference"`，仅 seedance-2.0/2.0-fast）
 
 omni_reference 模式支持**图片和视频混合参考**，通过以下方式提供素材文件：
 
@@ -395,11 +395,11 @@ for i in range(240):  # 最多 20 分钟
 
 ### 注意事项
 
-1. `jimeng-video-seedance-2.0` **仅国内站支持**，token 不要加 `us-`/`hk-` 等前缀
+1. `jimeng-video-seedance-2.0` 和 `jimeng-video-seedance-2.0-fast` **仅国内站支持**，token 不要加 `us-`/`hk-` 等前缀
 2. 任务记录 **3 天后自动过期删除**，请及时获取结果
 3. 图生视频时 `ratio` 参数会被输入图片的实际比例覆盖
 4. 同一个 `task_id` 可以无限次查询，直到过期
-5. 全能参考模式（`functionMode: "omni_reference"`）仅 `jimeng-video-seedance-2.0` 支持，支持 `file_paths` URL 数组、multipart 文件上传、以及旧版具名字段（`image_file_1`/`image_file_2`/`video_file`），最多 9 张图片 + 3 段视频
+5. 全能参考模式（`functionMode: "omni_reference"`）仅 `jimeng-video-seedance-2.0` 和 `jimeng-video-seedance-2.0-fast` 支持，支持 `file_paths` URL 数组、multipart 文件上传、以及旧版具名字段（`image_file_1`/`image_file_2`/`video_file`），最多 9 张图片 + 3 段视频
 6. 全能参考模式下，通用上传用 `@file_1`/`@file_2` 引用素材，具名字段用 `@image_file_1`/`@video_file` 引用，也支持 `@原始文件名`
 7. 系统根据文件扩展名（.mp4/.mov 等为视频）或 MIME 类型自动判断图片/视频
 8. 图片上传后会进行内容安全检测（仅国内站），违规内容会被拒绝

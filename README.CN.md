@@ -433,7 +433,7 @@ A: 可以。现在支持直接上传本地文件。请参考上方的“本地�
 - `duration` (number, 可选): 视频时长（秒）。不同模型支持的值：
   - `jimeng-video-veo3` / `jimeng-video-veo3.1`: `8`（固定）
   - `jimeng-video-sora2`: `4`（默认）、`8`、`12`
-  - `jimeng-video-seedance-2.0`: `4`~`15`（支持任意整数秒，默认`5`）
+  - `jimeng-video-seedance-2.0` / `jimeng-video-seedance-2.0-fast`: `4`~`15`（支持任意整数秒，默认`5`）
   - `jimeng-video-3.5-pro`: `5`（默认）、`10`、`12`
   - 其他模型: `5`（默认）、`10`
 - `file_paths` (array, 可选): 一个包含图片URL的数组，用于指定视频的**首帧**（数组第1个元素）和**尾帧**（数组第2个元素）。
@@ -448,6 +448,7 @@ A: 可以。现在支持直接上传本地文件。请参考上方的“本地�
 
 **支持的视频模型**:
 - `jimeng-video-seedance-2.0` - Seedance 2.0，仅国内站支持，支持4~15秒时长 **（最新）**
+- `jimeng-video-seedance-2.0-fast` - Seedance 2.0 Fast，仅国内站支持，支持4~15秒时长，速度更快
 - `jimeng-video-3.5-pro` - 专业版v3.5，国内/国际站均支持 **（默认）**
 - `jimeng-video-veo3` - Veo3模型，仅亚洲国际站 (HK/JP/SG) 支持，固定8秒时长
 - `jimeng-video-veo3.1` - Veo3.1模型，仅亚洲国际站 (HK/JP/SG) 支持，固定8秒时长
