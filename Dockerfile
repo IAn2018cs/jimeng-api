@@ -32,7 +32,7 @@ FROM node:18-alpine AS production
 
 # 安装健康检查工具、su-exec（用于entrypoint切换用户）和原生模块编译依赖（better-sqlite3 需要）
 # 同时安装 Chromium（playwright-core 使用系统 Chromium 驱动浏览器）
-RUN apk add --no-cache wget su-exec python3 make g++ chromium
+RUN apk add --no-cache wget su-exec python3 make g++ chromium dbus
 
 # 创建非root用户
 RUN addgroup -g 1001 -S nodejs && \
