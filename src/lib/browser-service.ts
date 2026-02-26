@@ -58,6 +58,7 @@ class BrowserService {
             "--no-first-run",
             "--no-zygote",
             "--single-process",
+            "--disable-dbus",
           ],
         });
 
