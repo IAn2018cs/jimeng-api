@@ -31,7 +31,8 @@ RUN npm run build
 FROM node:18-alpine AS production
 
 # 安装健康检查工具、su-exec（用于entrypoint切换用户）和原生模块编译依赖（better-sqlite3 需要）
-RUN apk add --no-cache wget su-exec python3 make g++
+# 同时安装 Chromium（playwright-core 使用系统 Chromium 驱动浏览器）
+RUN apk add --no-cache wget su-exec python3 make g++ chromium
 
 # 创建非root用户
 RUN addgroup -g 1001 -S nodejs && \
@@ -63,6 +64,9 @@ RUN chmod +x /app/entrypoint.sh
 
 # 设置环境变量
 ENV SERVER_PORT=5100
+# playwright-core 使用系统 Chromium（不自动下载浏览器）
+ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
+ENV PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium-browser
 
 # 暴露端口
 EXPOSE 5100
