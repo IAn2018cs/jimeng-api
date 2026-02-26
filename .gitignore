@@ -12,11 +12,12 @@ build/
 # Logs
 logs/
 *.log
-exclude_list.txt
 data/
 
-#images
+#media
 *.jpeg
+*.jpg
+*.mp4
 
 # Environment variables
 .env
@@ -56,4 +57,9 @@ coverage/
 tmp/
 temp/
 jimeng-*.md
+scripts/
 .ace-tool/
+
+# Subprojects
+jimeng-proxy/
+jimeng-free-api-all/

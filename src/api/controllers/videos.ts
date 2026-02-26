@@ -10,7 +10,7 @@ import { getCredit, receiveCredit, request, parseRegionFromToken, getAssistantId
 import logger from "@/lib/logger.ts";
 import { SmartPoller, PollingStatus } from "@/lib/smart-poller.ts";
 import { DEFAULT_ASSISTANT_ID_CN, DEFAULT_ASSISTANT_ID_US, DEFAULT_ASSISTANT_ID_HK, DEFAULT_ASSISTANT_ID_JP, DEFAULT_ASSISTANT_ID_SG, DEFAULT_VIDEO_MODEL, DRAFT_VERSION, DRAFT_VERSION_OMNI, OMNI_BENEFIT_TYPE, OMNI_BENEFIT_TYPE_FAST, VIDEO_MODEL_MAP, VIDEO_MODEL_MAP_US, VIDEO_MODEL_MAP_ASIA, STATUS_CODE_MAP } from "@/api/consts/common.ts";
-import { uploadImageBuffer } from "@/lib/image-uploader.ts";
+import { uploadImageBuffer, ImageUploadResult } from "@/lib/image-uploader.ts";
 import { uploadVideoBuffer, VideoUploadResult } from "@/lib/video-uploader.ts";
 import { extractVideoUrl } from "@/lib/image-utils.ts";
 import taskStore from "@/lib/task-store.ts";
@@ -59,7 +59,7 @@ function getVideoBenefitType(model: string): string {
 }
 
 // 处理本地上传的图片文件
-async function uploadImageFromFile(file: any, refreshToken: string, regionInfo: RegionInfo): Promise<string> {
+async function uploadImageFromFile(file: any, refreshToken: string, regionInfo: RegionInfo): Promise<ImageUploadResult> {
   try {
     logger.info(`开始从本地文件上传图片: ${file.originalFilename} (路径: ${file.filepath})`);
     const imageBuffer = await fs.readFile(file.filepath);
@@ -71,7 +71,7 @@ async function uploadImageFromFile(file: any, refreshToken: string, regionInfo: 
 }
 
 // 处理来自URL的图片
-async function uploadImageFromUrl(imageUrl: string, refreshToken: string, regionInfo: RegionInfo): Promise<string> {
+async function uploadImageFromUrl(imageUrl: string, refreshToken: string, regionInfo: RegionInfo): Promise<ImageUploadResult> {
   try {
     logger.info(`开始从URL下载并上传图片: ${imageUrl}`);
     const imageResponse = await axios.get(imageUrl, {
@@ -267,6 +267,9 @@ async function prepareAndSubmitVideo(
       refName: string;
       originalFilename: string;
       imageUri?: string;
+      imageWidth?: number;
+      imageHeight?: number;
+      imageFormat?: string;
       videoResult?: VideoUploadResult;
     }
     const materialRegistry: Map<string, MaterialEntry> = new Map();
@@ -328,14 +331,14 @@ async function prepareAndSubmitVideo(
         try {
           logger.info(`[omni] 上传图片 ${refName}: ${file.originalFilename}`);
           const buf = await fs.readFile(file.filepath);
-          const uri = await uploadImageBuffer(buf, refreshToken, regionInfo);
-          await checkImageContent(uri, refreshToken, regionInfo);
-          const entry: MaterialEntry = { idx: materialIdx++, type: "image", refName, originalFilename: file.originalFilename, imageUri: uri };
+          const imgResult = await uploadImageBuffer(buf, refreshToken, regionInfo);
+          await checkImageContent(imgResult.uri, refreshToken, regionInfo);
+          const entry: MaterialEntry = { idx: materialIdx++, type: "image", refName, originalFilename: file.originalFilename, imageUri: imgResult.uri, imageWidth: imgResult.width, imageHeight: imgResult.height, imageFormat: imgResult.format };
           materialRegistry.set(refName, entry);
           if (file.originalFilename && file.originalFilename !== refName) {
             materialRegistry.set(file.originalFilename, entry);
           }
-          logger.info(`[omni] ${refName} 图片上传成功: ${uri}`);
+          logger.info(`[omni] ${refName} 图片上传成功: ${imgResult.uri} (${imgResult.width}x${imgResult.height})`);
         } catch (error: any) {
           throw new APIException(EX.API_REQUEST_FAILED, `图片文件 ${file.originalFilename} 处理失败: ${error.message}`);
         }
@@ -377,14 +380,14 @@ async function prepareAndSubmitVideo(
 
           try {
             logger.info(`[omni] 从URL下载并上传图片 ${refName}: ${fileUrl}`);
-            const uri = await uploadImageFromUrl(fileUrl, refreshToken, regionInfo);
-            await checkImageContent(uri, refreshToken, regionInfo);
-            const entry: MaterialEntry = { idx: materialIdx++, type: "image", refName, originalFilename: urlFilename || refName, imageUri: uri };
+            const imgResult = await uploadImageFromUrl(fileUrl, refreshToken, regionInfo);
+            await checkImageContent(imgResult.uri, refreshToken, regionInfo);
+            const entry: MaterialEntry = { idx: materialIdx++, type: "image", refName, originalFilename: urlFilename || refName, imageUri: imgResult.uri, imageWidth: imgResult.width, imageHeight: imgResult.height, imageFormat: imgResult.format };
             materialRegistry.set(refName, entry);
             if (urlFilename && urlFilename !== refName) {
               materialRegistry.set(urlFilename, entry);
             }
-            logger.info(`[omni] ${refName} 图片上传成功: ${uri}`);
+            logger.info(`[omni] ${refName} 图片上传成功: ${imgResult.uri} (${imgResult.width}x${imgResult.height})`);
           } catch (error: any) {
             throw new APIException(EX.API_REQUEST_FAILED, `图片URL ${fileUrl} 处理失败: ${error.message}`);
           }
@@ -410,9 +413,9 @@ async function prepareAndSubmitVideo(
           material_type: "image",
           image_info: {
             image_uri: entry.imageUri,
-            width: 0,
-            height: 0,
-            format: "",
+            width: entry.imageWidth || 0,
+            height: entry.imageHeight || 0,
+            format: entry.imageFormat || "",
             id: util.uuid(),
             name: "",
             platform_type: 1,
@@ -449,7 +452,7 @@ async function prepareAndSubmitVideo(
 
     // 构建 omni payload
     const componentId = util.uuid();
-    const originSubmitId = util.uuid();
+    const submitId = util.uuid();
 
     const sceneOption = {
       type: "video",
@@ -468,7 +471,7 @@ async function prepareAndSubmitVideo(
     const metricsExtra = JSON.stringify({
       position: "page_bottom_box",
       isDefaultSeed: 1,
-      originSubmitId,
+      originSubmitId: submitId,
       isRegenerate: false,
       enterFrom: "click",
       functionMode: "omni_reference",
@@ -500,7 +503,7 @@ async function prepareAndSubmitVideo(
             resource_sub_type: "aigc",
           }],
         },
-        submit_id: util.uuid(),
+        submit_id: submitId,
         metrics_extra: metricsExtra,
         draft_content: JSON.stringify({
           type: "draft",
@@ -550,7 +553,7 @@ async function prepareAndSubmitVideo(
                     idip_meta_list: [],
                   }],
                   video_aspect_ratio: ratio,
-                  seed: Math.floor(Math.random() * 100000000) + 2500000000,
+                  seed: Math.floor(Math.random() * 4294967296),
                   model_req_key: model,
                   priority: 0,
                 },
@@ -580,11 +583,11 @@ async function prepareAndSubmitVideo(
         if (!file) continue;
         try {
           logger.info(`开始上传第 ${i + 1} 张本地图片: ${file.originalFilename}`);
-          const imageUri = await uploadImageFromFile(file, refreshToken, regionInfo);
-          if (imageUri) {
-            await checkImageContent(imageUri, refreshToken, regionInfo);
-            uploadIDs.push(imageUri);
-            logger.info(`第 ${i + 1} 张本地图片上传成功: ${imageUri}`);
+          const imgResult = await uploadImageFromFile(file, refreshToken, regionInfo);
+          if (imgResult) {
+            await checkImageContent(imgResult.uri, refreshToken, regionInfo);
+            uploadIDs.push(imgResult.uri);
+            logger.info(`第 ${i + 1} 张本地图片上传成功: ${imgResult.uri}`);
           } else {
             logger.error(`第 ${i + 1} 张本地图片上传失败: 未获取到 image_uri`);
           }
@@ -605,11 +608,11 @@ async function prepareAndSubmitVideo(
         }
         try {
           logger.info(`开始上传第 ${i + 1} 个URL图片: ${filePath}`);
-          const imageUri = await uploadImageFromUrl(filePath, refreshToken, regionInfo);
-          if (imageUri) {
-            await checkImageContent(imageUri, refreshToken, regionInfo);
-            uploadIDs.push(imageUri);
-            logger.info(`第 ${i + 1} 个URL图片上传成功: ${imageUri}`);
+          const imgResult = await uploadImageFromUrl(filePath, refreshToken, regionInfo);
+          if (imgResult) {
+            await checkImageContent(imgResult.uri, refreshToken, regionInfo);
+            uploadIDs.push(imgResult.uri);
+            logger.info(`第 ${i + 1} 个URL图片上传成功: ${imgResult.uri}`);
           } else {
             logger.error(`第 ${i + 1} 个URL图片上传失败: 未获取到 image_uri`);
           }
@@ -746,7 +749,7 @@ async function prepareAndSubmitVideo(
                     idip_meta_list: [],
                   }],
                   video_aspect_ratio: ratio,
-                  seed: Math.floor(Math.random() * 100000000) + 2500000000,
+                  seed: Math.floor(Math.random() * 4294967296),
                   model_req_key: model,
                   priority: 0,
                 },
@@ -764,11 +767,17 @@ async function prepareAndSubmitVideo(
   }
 
   // 发送请求
+  const videoReferer = regionInfo.isCN
+    ? "https://jimeng.jianying.com/ai-tool/generate?type=video"
+    : "https://dreamina.capcut.com/ai-tool/generate?type=video";
   const { aigc_data } = await request(
     "post",
     "/mweb/v1/aigc_draft/generate",
     refreshToken,
-    requestData
+    {
+      ...requestData,
+      headers: { Referer: videoReferer },
+    }
   );
 
   const historyId = aigc_data.history_record_id;
@@ -804,10 +813,10 @@ async function pollVideoResult(
 
   const poller = new SmartPoller({
     maxPollCount,
-    pollInterval: 10000, // 10秒基础间隔
+    pollInterval: 20000, // 20秒基础间隔
     expectedItemCount: 1,
     type: 'video',
-    timeoutSeconds: 1200 // 20分钟超时
+    timeoutSeconds: 3600 // 60分钟超时
   });
 
   const { result: pollingResult, data: finalHistoryData } = await poller.poll(async () => {
