@@ -36,7 +36,8 @@ export interface VideoUploadResult {
 export async function uploadVideoBuffer(
   videoBuffer: ArrayBuffer | Buffer,
   refreshToken: string,
-  regionInfo: RegionInfo
+  regionInfo: RegionInfo,
+  skipDurationCheck: boolean = false
 ): Promise<VideoUploadResult> {
   try {
     const fileSize = videoBuffer.byteLength;
@@ -266,7 +267,7 @@ export async function uploadVideoBuffer(
 
     // 校验视频时长，即梦限制不超过15秒
     const MAX_VIDEO_DURATION = 15;
-    if (videoMeta?.Duration && videoMeta.Duration > MAX_VIDEO_DURATION) {
+    if (!skipDurationCheck && videoMeta?.Duration && videoMeta.Duration > MAX_VIDEO_DURATION) {
       throw new Error(`视频时长 ${videoMeta.Duration.toFixed(2)}s 超过限制 (最大 ${MAX_VIDEO_DURATION}s)`);
     }
 

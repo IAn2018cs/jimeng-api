@@ -6,14 +6,16 @@ import APIException from "@/lib/exceptions/APIException.ts";
 
 import EX from "@/api/consts/exceptions.ts";
 import util from "@/lib/util.ts";
-import { getCredit, receiveCredit, request, parseRegionFromToken, getAssistantId, checkImageContent, RegionInfo } from "./core.ts";
+import { getCredit, receiveCredit, request, parseRegionFromToken, parseProxyFromToken, getAssistantId, checkImageContent, RegionInfo, WEB_ID } from "./core.ts";
 import logger from "@/lib/logger.ts";
 import { SmartPoller, PollingStatus } from "@/lib/smart-poller.ts";
-import { DEFAULT_ASSISTANT_ID_CN, DEFAULT_ASSISTANT_ID_US, DEFAULT_ASSISTANT_ID_HK, DEFAULT_ASSISTANT_ID_JP, DEFAULT_ASSISTANT_ID_SG, DEFAULT_VIDEO_MODEL, DRAFT_VERSION, DRAFT_VERSION_OMNI, OMNI_BENEFIT_TYPE, OMNI_BENEFIT_TYPE_FAST, VIDEO_MODEL_MAP, VIDEO_MODEL_MAP_US, VIDEO_MODEL_MAP_ASIA, STATUS_CODE_MAP } from "@/api/consts/common.ts";
+import { DEFAULT_ASSISTANT_ID_CN, DEFAULT_VIDEO_MODEL, DRAFT_VERSION, DRAFT_VERSION_OMNI, OMNI_BENEFIT_TYPE, OMNI_BENEFIT_TYPE_FAST, VIDEO_MODEL_MAP, VIDEO_MODEL_MAP_US, VIDEO_MODEL_MAP_ASIA, STATUS_CODE_MAP, BASE_URL_CN, REGION_CN } from "@/api/consts/common.ts";
+import { WEB_VERSION } from "@/api/consts/dreamina.ts";
 import { uploadImageBuffer, ImageUploadResult } from "@/lib/image-uploader.ts";
 import { uploadVideoBuffer, VideoUploadResult } from "@/lib/video-uploader.ts";
 import { extractVideoUrl } from "@/lib/image-utils.ts";
 import taskStore from "@/lib/task-store.ts";
+import browserService from "@/lib/browser-service.ts";
 
 export const DEFAULT_MODEL = DEFAULT_VIDEO_MODEL;
 
@@ -255,15 +257,18 @@ async function prepareAndSubmitVideo(
 
     // 从文件扩展名/MIME类型判断文件类型
     const VIDEO_EXTS = new Set(['mp4', 'mov', 'avi', 'mkv', 'webm', 'flv', 'wmv', 'm4v']);
-    function getFileTypeFromName(filename: string): "image" | "video" {
+    const AUDIO_EXTS = new Set(['mp3', 'wav', 'aac', 'ogg', 'flac', 'm4a', 'wma', 'opus']);
+    function getFileTypeFromName(filename: string): "image" | "video" | "audio" {
       const ext = (filename || '').toLowerCase().split('.').pop() || '';
-      return VIDEO_EXTS.has(ext) ? 'video' : 'image';
+      if (AUDIO_EXTS.has(ext)) return 'audio';
+      if (VIDEO_EXTS.has(ext)) return 'video';
+      return 'image';
     }
 
     // 素材注册表
     interface MaterialEntry {
       idx: number;
-      type: "image" | "video";
+      type: "image" | "video" | "audio";
       refName: string;
       originalFilename: string;
       imageUri?: string;
@@ -271,6 +276,8 @@ async function prepareAndSubmitVideo(
       imageHeight?: number;
       imageFormat?: string;
       videoResult?: VideoUploadResult;
+      audioVid?: string;
+      audioDuration?: number;
     }
     const materialRegistry: Map<string, MaterialEntry> = new Map();
     let materialIdx = 0;
@@ -290,7 +297,7 @@ async function prepareAndSubmitVideo(
         if (!file) continue;
 
         let refName: string;
-        let fileType: "image" | "video";
+        let fileType: "image" | "video" | "audio";
 
         if (LEGACY_IMAGE_FIELDS.has(fieldName)) {
           // 旧版具名字段: 用字段名作为引用名，类型由字段名决定
@@ -303,6 +310,7 @@ async function prepareAndSubmitVideo(
           // 通用字段名: 自动编号 file_1, file_2, ...，类型从 MIME/扩展名判断
           refName = `file_${materialIdx + 1}`;
           fileType = file.mimetype?.startsWith('video/') ? 'video' as const
+                   : file.mimetype?.startsWith('audio/') ? 'audio' as const
                    : file.mimetype?.startsWith('image/') ? 'image' as const
                    : getFileTypeFromName(file.originalFilename);
         }
@@ -323,6 +331,21 @@ async function prepareAndSubmitVideo(
           logger.info(`[omni] ${refName} 视频上传成功: vid=${vResult.vid}, ${vResult.videoMeta.width}x${vResult.videoMeta.height}, ${vResult.videoMeta.duration}s`);
         } catch (error: any) {
           throw new APIException(EX.API_REQUEST_FAILED, `视频文件 ${file.originalFilename} 处理失败: ${error.message}`);
+        }
+      } else if (fileType === 'audio') {
+        try {
+          logger.info(`[omni] 上传音频 ${refName}: ${file.originalFilename}`);
+          const buf = await fs.readFile(file.filepath);
+          // 音频使用 VOD 通道（skipDurationCheck=true），与视频上传流程相同
+          const vResult = await uploadVideoBuffer(buf, refreshToken, regionInfo, true);
+          const entry: MaterialEntry = { idx: materialIdx++, type: "audio", refName, originalFilename: file.originalFilename, audioVid: vResult.vid, audioDuration: vResult.videoMeta.duration };
+          materialRegistry.set(refName, entry);
+          if (file.originalFilename && file.originalFilename !== refName) {
+            materialRegistry.set(file.originalFilename, entry);
+          }
+          logger.info(`[omni] ${refName} 音频上传成功: vid=${vResult.vid}, duration=${vResult.videoMeta.duration}s`);
+        } catch (error: any) {
+          throw new APIException(EX.API_REQUEST_FAILED, `音频文件 ${file.originalFilename} 处理失败: ${error.message}`);
         }
       } else {
         imageCount++;
@@ -373,6 +396,23 @@ async function prepareAndSubmitVideo(
             logger.info(`[omni] ${refName} 视频上传成功: vid=${vResult.vid}`);
           } catch (error: any) {
             throw new APIException(EX.API_REQUEST_FAILED, `视频URL ${fileUrl} 处理失败: ${error.message}`);
+          }
+        } else if (fileType === 'audio') {
+          try {
+            logger.info(`[omni] 从URL下载并上传音频 ${refName}: ${fileUrl}`);
+            const response = await axios.get(fileUrl, { responseType: 'arraybuffer', proxy: false });
+            if (response.status < 200 || response.status >= 300) {
+              throw new Error(`下载音频失败: ${response.status}`);
+            }
+            const vResult = await uploadVideoBuffer(response.data, refreshToken, regionInfo, true);
+            const entry: MaterialEntry = { idx: materialIdx++, type: "audio", refName, originalFilename: urlFilename || refName, audioVid: vResult.vid, audioDuration: vResult.videoMeta.duration };
+            materialRegistry.set(refName, entry);
+            if (urlFilename && urlFilename !== refName) {
+              materialRegistry.set(urlFilename, entry);
+            }
+            logger.info(`[omni] ${refName} 音频上传成功: vid=${vResult.vid}`);
+          } catch (error: any) {
+            throw new APIException(EX.API_REQUEST_FAILED, `音频URL ${fileUrl} 处理失败: ${error.message}`);
           }
         } else {
           imageCount++;
@@ -425,7 +465,7 @@ async function prepareAndSubmitVideo(
           },
         });
         materialTypes.push(1);
-      } else {
+      } else if (entry.type === "video") {
         const vm = entry.videoResult!;
         material_list.push({
           material_type: "video",
@@ -442,6 +482,20 @@ async function prepareAndSubmitVideo(
           },
         });
         materialTypes.push(2);
+      } else {
+        // audio
+        material_list.push({
+          material_type: "audio",
+          audio_info: {
+            type: "audio",
+            id: util.uuid(),
+            source_from: "upload",
+            vid: entry.audioVid,
+            duration: entry.audioDuration || 0,
+            name: "",
+          },
+        });
+        materialTypes.push(3);
       }
     }
 
@@ -478,8 +532,13 @@ async function prepareAndSubmitVideo(
       sceneOptions: JSON.stringify([sceneOption]),
     });
 
-    // 根据模型选择 benefit_type
-    const omniBenefitType = is40 ? OMNI_BENEFIT_TYPE_FAST : OMNI_BENEFIT_TYPE;
+    // 根据模型和素材类型决定 benefit_type
+    // 包含视频素材时追加 _with_video 后缀（仅对 FAST 模型适用）
+    const hasVideoMaterial = orderedEntries.some(e => e.type === "video");
+    const omniBenefitTypeBase = is40 ? OMNI_BENEFIT_TYPE_FAST : OMNI_BENEFIT_TYPE;
+    const omniBenefitType = (is40 && hasVideoMaterial)
+      ? `${omniBenefitTypeBase}_with_video`
+      : omniBenefitTypeBase;
 
     requestData = {
       params: {
@@ -767,26 +826,123 @@ async function prepareAndSubmitVideo(
   }
 
   // 发送请求
-  const videoReferer = regionInfo.isCN
-    ? "https://jimeng.jianying.com/ai-tool/generate?type=video"
-    : "https://dreamina.capcut.com/ai-tool/generate?type=video";
-  const { aigc_data } = await request(
-    "post",
-    "/mweb/v1/aigc_draft/generate",
-    refreshToken,
-    {
-      ...requestData,
-      headers: { Referer: videoReferer },
-    }
-  );
+  // Seedance 模型（is40 / is40Pro）通过浏览器代理发送，绕过 shark a_bogus 反爬拦截
+  // 其他模型直接使用 axios 请求
+  let aigc_data: any;
+  if (is40 || is40Pro) {
+    // 构建完整 URL（CN 专用，Seedance 不支持国际站）
+    const { token: sessionToken } = parseProxyFromToken(refreshToken);
+    const generateQueryParams = new URLSearchParams({
+      aid: String(DEFAULT_ASSISTANT_ID_CN),
+      device_platform: "web",
+      region: REGION_CN,
+      webId: String(WEB_ID),
+      da_version: requestData.params.da_version,
+      web_component_open_flag: "1",
+      web_version: requestData.params.web_version || WEB_VERSION,
+      aigc_features: requestData.params.aigc_features || "app_lip_sync",
+    });
+    const generateUrl = `${BASE_URL_CN}/mweb/v1/aigc_draft/generate?${generateQueryParams.toString()}`;
 
-  const historyId = aigc_data.history_record_id;
+    logger.info(`Seedance: 通过浏览器代理发送 generate 请求...`);
+    const generateResult = await browserService.fetch(sessionToken, generateUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(requestData.data),
+    });
+
+    const { ret, errmsg, data: generateData } = generateResult;
+    if (ret !== undefined && Number(ret) !== 0) {
+      if (Number(ret) === 5000) {
+        throw new APIException(EX.API_IMAGE_GENERATION_FAILED,
+          `[无法生成视频]: 即梦积分可能不足，${errmsg}`);
+      }
+      throw new APIException(EX.API_REQUEST_FAILED, `[请求jimeng失败]: ${errmsg}`);
+    }
+    aigc_data = generateData?.aigc_data || generateResult.aigc_data;
+  } else {
+    const videoReferer = regionInfo.isCN
+      ? "https://jimeng.jianying.com/ai-tool/generate?type=video"
+      : "https://dreamina.capcut.com/ai-tool/generate?type=video";
+    const result = await request(
+      "post",
+      "/mweb/v1/aigc_draft/generate",
+      refreshToken,
+      {
+        ...requestData,
+        headers: { Referer: videoReferer },
+      }
+    );
+    aigc_data = result.aigc_data;
+  }
+
+  const historyId = aigc_data?.history_record_id;
   if (!historyId)
     throw new APIException(EX.API_IMAGE_GENERATION_FAILED, "记录ID不存在");
 
   logger.info(`视频生成任务已提交，history_id: ${historyId}，等待生成完成...`);
 
   return historyId;
+}
+
+
+/**
+ * 通过 get_local_item_list API 获取高质量视频下载 URL
+ * 比直接从历史记录响应中提取的预览 URL 码率更高
+ *
+ * @param itemId 视频 item_id
+ * @param refreshToken 刷新令牌
+ * @returns 高质量视频 URL，失败时返回 null
+ */
+async function fetchHighQualityVideoUrl(itemId: string, refreshToken: string): Promise<string | null> {
+  try {
+    logger.info(`尝试获取高质量视频URL，itemId: ${itemId}`);
+    const result = await request("post", "/mweb/v1/get_local_item_list", refreshToken, {
+      data: {
+        item_id_list: [itemId],
+        pack_item_opt: { scene: 1, need_data_integrity: true },
+        is_for_video_download: true,
+      },
+    });
+
+    // 策略1: 从结构化字段提取 video.transcoded_video.origin.video_url
+    const items = result?.item_list || result?.items || [];
+    for (const item of items) {
+      const url = item?.video?.transcoded_video?.origin?.video_url;
+      if (url && url.includes("jimeng.com")) {
+        logger.info(`策略1: 获取到高质量URL: ${url}`);
+        return url;
+      }
+    }
+
+    // 策略2: 正则匹配 dreamnia.jimeng.com 高质量 URL
+    const responseStr = JSON.stringify(result);
+    const dreamUrl = responseStr.match(/https?:\/\/[^"'\s]*dreamnia\.jimeng\.com[^"'\s]*/);
+    if (dreamUrl) {
+      logger.info(`策略2: 获取到高质量URL: ${dreamUrl[0]}`);
+      return dreamUrl[0];
+    }
+
+    // 策略3: 匹配任意 jimeng.com 视频 URL
+    const jimengUrl = responseStr.match(/https?:\/\/[^"'\s]*jimeng\.com[^"'\s]*\.mp4[^"'\s]*/);
+    if (jimengUrl) {
+      logger.info(`策略3: 获取到视频URL: ${jimengUrl[0]}`);
+      return jimengUrl[0];
+    }
+
+    // 策略4: 兜底匹配 vlabvod/jimeng 域名
+    const fallbackUrl = responseStr.match(/https:\/\/v[0-9]+-artist\.vlabvod\.com\/[^"'\s]+/);
+    if (fallbackUrl) {
+      logger.info(`策略4: 获取到兜底URL: ${fallbackUrl[0]}`);
+      return fallbackUrl[0];
+    }
+
+    logger.warn(`fetchHighQualityVideoUrl: 未能从响应中提取视频URL`);
+    return null;
+  } catch (err: any) {
+    logger.warn(`fetchHighQualityVideoUrl 调用失败（不影响主流程）: ${err.message}`);
+    return null;
+  }
 }
 
 
@@ -910,6 +1066,18 @@ async function pollVideoResult(
 
   // 提取视频URL
   let videoUrl = item_list?.[0] ? extractVideoUrl(item_list[0]) : null;
+
+  // 尝试获取高质量视频 URL（通过 get_local_item_list API）
+  const itemId = item_list?.[0]?.item_id
+    || item_list?.[0]?.id
+    || item_list?.[0]?.local_item_id
+    || item_list?.[0]?.common_attr?.id;
+  if (itemId) {
+    const highQualityUrl = await fetchHighQualityVideoUrl(itemId, refreshToken);
+    if (highQualityUrl) {
+      videoUrl = highQualityUrl;
+    }
+  }
 
   // 如果无法获取视频URL，抛出异常
   if (!videoUrl) {

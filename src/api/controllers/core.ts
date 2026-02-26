@@ -37,9 +37,9 @@ const MODEL_NAME = "jimeng";
 // 设备ID
 const DEVICE_ID = Math.random() * 999999999999999999 + 7000000000000000000;
 // WebID
-const WEB_ID = Math.random() * 999999999999999999 + 7000000000000000000;
+export const WEB_ID = Math.random() * 999999999999999999 + 7000000000000000000;
 // 用户ID（32位hex，无横线）
-const USER_ID = util.uuid(false);
+export const USER_ID = util.uuid(false);
 // 伪装headers
 const FAKE_HEADERS = {
   Accept: "application/json, text/plain, */*",
@@ -153,6 +153,29 @@ export function getAssistantId(regionInfo: RegionInfo): number {
   if (regionInfo.isSG) return DEFAULT_ASSISTANT_ID_SG;
   if (regionInfo.isHK) return DEFAULT_ASSISTANT_ID_HK;
   return DEFAULT_ASSISTANT_ID_CN;
+}
+
+/**
+ * 获取浏览器格式的cookie数组（用于 Playwright context.addCookies）
+ */
+export function getCookiesForBrowser(refreshToken: string) {
+  const { token: tokenWithRegion } = parseProxyFromToken(refreshToken);
+  const { isUS, isHK, isJP, isSG } = parseRegionFromToken(tokenWithRegion);
+  const sessionToken = (isUS || isHK || isJP || isSG)
+    ? tokenWithRegion.substring(3)
+    : tokenWithRegion;
+  const domain = ".jianying.com";
+  return [
+    { name: "_tea_web_id", value: String(WEB_ID), domain, path: "/" },
+    { name: "is_staff_user", value: "false", domain, path: "/" },
+    { name: "store-region", value: "cn-gd", domain, path: "/" },
+    { name: "store-region-src", value: "uid", domain, path: "/" },
+    { name: "uid_tt", value: USER_ID, domain, path: "/" },
+    { name: "uid_tt_ss", value: USER_ID, domain, path: "/" },
+    { name: "sid_tt", value: sessionToken, domain, path: "/" },
+    { name: "sessionid", value: sessionToken, domain, path: "/" },
+    { name: "sessionid_ss", value: sessionToken, domain, path: "/" },
+  ];
 }
 
 /**
