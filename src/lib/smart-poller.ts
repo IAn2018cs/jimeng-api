@@ -141,7 +141,12 @@ export class SmartPoller {
     if (elapsedTime >= this.options.timeoutSeconds && itemCount > 0) {
       return { shouldExit: true, reason: '时间超限但已有结果' };
     }
-    
+
+    // 7. 时间超限且无结果
+    if (elapsedTime >= this.options.timeoutSeconds && itemCount === 0) {
+      return { shouldExit: true, reason: '时间超限无结果' };
+    }
+
     return { shouldExit: false, reason: '' };
   }
   
@@ -187,7 +192,7 @@ export class SmartPoller {
           }
 
           // 处理超时情况
-          if (reason === '轮询次数超限' || reason === '时间超限但已有结果') {
+          if (reason === '轮询次数超限' || reason === '时间超限但已有结果' || reason === '时间超限无结果') {
             handlePollingTimeout(
               this.pollCount,
               this.options.maxPollCount,

@@ -969,10 +969,10 @@ async function pollVideoResult(
 
   const poller = new SmartPoller({
     maxPollCount,
-    pollInterval: 20000, // 20秒基础间隔
+    pollInterval: 60000, // 60秒基础间隔
     expectedItemCount: 1,
     type: 'video',
-    timeoutSeconds: 3600 // 60分钟超时
+    timeoutSeconds: 43200 // 12小时超时
   });
 
   const { result: pollingResult, data: finalHistoryData } = await poller.poll(async () => {
