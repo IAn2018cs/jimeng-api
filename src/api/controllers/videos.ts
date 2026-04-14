@@ -9,7 +9,7 @@ import util from "@/lib/util.ts";
 import { getCredit, receiveCredit, request, parseRegionFromToken, parseProxyFromToken, getAssistantId, checkImageContent, RegionInfo, WEB_ID } from "./core.ts";
 import logger from "@/lib/logger.ts";
 import { SmartPoller, PollingStatus } from "@/lib/smart-poller.ts";
-import { DEFAULT_ASSISTANT_ID_CN, DEFAULT_VIDEO_MODEL, DRAFT_VERSION, DRAFT_VERSION_OMNI, OMNI_BENEFIT_TYPE, OMNI_BENEFIT_TYPE_FAST, VIDEO_MODEL_MAP, VIDEO_MODEL_MAP_US, VIDEO_MODEL_MAP_ASIA, STATUS_CODE_MAP, BASE_URL_CN, REGION_CN } from "@/api/consts/common.ts";
+import { DEFAULT_ASSISTANT_ID_CN, DEFAULT_VIDEO_MODEL, DRAFT_VERSION, DRAFT_VERSION_OMNI, DRAFT_VERSION_VIP, OMNI_BENEFIT_TYPE, OMNI_BENEFIT_TYPE_FAST, OMNI_BENEFIT_TYPE_FAST_VIP, OMNI_BENEFIT_TYPE_VIP, VIDEO_MODEL_MAP, VIDEO_MODEL_MAP_US, VIDEO_MODEL_MAP_ASIA, STATUS_CODE_MAP, BASE_URL_CN, REGION_CN } from "@/api/consts/common.ts";
 import { WEB_VERSION } from "@/api/consts/dreamina.ts";
 import { uploadImageBuffer, ImageUploadResult } from "@/lib/image-uploader.ts";
 import { uploadVideoBuffer, VideoUploadResult } from "@/lib/video-uploader.ts";
@@ -44,6 +44,13 @@ function getVideoBenefitType(model: string): string {
   // sora2 模型
   if (model.includes("sora2")) {
     return "generate_video_sora2";
+  }
+  // Seedance VIP 模型（需先于 40_pro / 40 检查，因为 vision 名称包含 40_pro / 40）
+  if (model.includes("40_pro_vision")) {
+    return "seedance_20_pro_720p_output";
+  }
+  if (model.includes("40_vision")) {
+    return "seedance_20_fast_720p_output";
   }
   if (model.includes("40_pro")) {
     return "dreamina_video_seedance_20_pro";
@@ -184,6 +191,11 @@ async function prepareAndSubmitVideo(
   const is35Pro = model.includes("3.5_pro");
   const is40Pro = model.includes("40_pro");
   const is40 = model.includes("40") && !model.includes("40_pro");
+  const is40ProVision = model.includes("40_pro_vision");
+  const is40Vision = model.includes("40_vision") && !model.includes("40_pro_vision");
+  const isVipModel = is40ProVision || is40Vision;
+  // VIP 模型使用 3.3.12，非 VIP seedance 使用 3.3.9
+  const seedanceDraftVersion = isVipModel ? DRAFT_VERSION_VIP : DRAFT_VERSION_OMNI;
   // 只有 video-3.0 和 video-3.0-fast 支持 resolution 参数（3.0-pro 和 3.5-pro 不支持）
   const supportsResolution = (model.includes("vgfm_3.0") || model.includes("vgfm_3.0_fast")) && !model.includes("_pro");
 
@@ -533,22 +545,29 @@ async function prepareAndSubmitVideo(
     });
 
     // 根据模型和素材类型决定 benefit_type
-    // 包含视频素材时追加 _with_video 后缀（仅对 FAST 模型适用）
+    // VIP 模型使用专属 benefit_type，非 VIP FAST 模型包含视频素材时追加 _with_video 后缀
     const hasVideoMaterial = orderedEntries.some(e => e.type === "video");
-    const omniBenefitTypeBase = is40 ? OMNI_BENEFIT_TYPE_FAST : OMNI_BENEFIT_TYPE;
-    const omniBenefitType = (is40 && hasVideoMaterial)
-      ? `${omniBenefitTypeBase}_with_video`
-      : omniBenefitTypeBase;
+    let omniBenefitType: string;
+    if (is40ProVision) {
+      omniBenefitType = OMNI_BENEFIT_TYPE_VIP;
+    } else if (is40Vision) {
+      omniBenefitType = OMNI_BENEFIT_TYPE_FAST_VIP;
+    } else if (is40) {
+      omniBenefitType = hasVideoMaterial ? `${OMNI_BENEFIT_TYPE_FAST}_with_video` : OMNI_BENEFIT_TYPE_FAST;
+    } else {
+      omniBenefitType = OMNI_BENEFIT_TYPE;
+    }
 
     requestData = {
       params: {
         aigc_features: "app_lip_sync",
         web_version: "7.5.0",
-        da_version: DRAFT_VERSION_OMNI,
+        da_version: seedanceDraftVersion,
       },
       data: {
         extend: {
           root_model: model,
+          workspace_id: 0,
           m_video_commerce_info: {
             benefit_type: omniBenefitType,
             resource_id: "generate_video",
@@ -567,10 +586,10 @@ async function prepareAndSubmitVideo(
         draft_content: JSON.stringify({
           type: "draft",
           id: util.uuid(),
-          min_version: DRAFT_VERSION_OMNI,
+          min_version: seedanceDraftVersion,
           min_features: ["AIGC_Video_UnifiedEdit"],
           is_from_tsn: true,
-          version: DRAFT_VERSION_OMNI,
+          version: seedanceDraftVersion,
           main_component_id: componentId,
           component_list: [{
             type: "video_base_component",
@@ -598,7 +617,7 @@ async function prepareAndSubmitVideo(
                   video_gen_inputs: [{
                     type: "",
                     id: util.uuid(),
-                    min_version: DRAFT_VERSION_OMNI,
+                    min_version: seedanceDraftVersion,
                     prompt: "",
                     video_mode: 2,
                     fps: 24,
@@ -743,11 +762,12 @@ async function prepareAndSubmitVideo(
       params: {
         aigc_features: "app_lip_sync",
         web_version: "7.5.0",
-        da_version: DRAFT_VERSION,
+        da_version: (is40 || is40Pro) ? seedanceDraftVersion : DRAFT_VERSION,
       },
       data: {
         extend: {
           root_model: model,
+          workspace_id: 0,
           m_video_commerce_info: {
             benefit_type: getVideoBenefitType(model),
             resource_id: "generate_video",
@@ -839,6 +859,7 @@ async function prepareAndSubmitVideo(
       webId: String(WEB_ID),
       da_version: requestData.params.da_version,
       web_component_open_flag: "1",
+      commerce_with_input_video: "1",
       web_version: requestData.params.web_version || WEB_VERSION,
       aigc_features: requestData.params.aigc_features || "app_lip_sync",
     });
