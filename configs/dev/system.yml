@@ -12,9 +12,3 @@ logFileExpires: 2626560000
 tmpFileExpires: 86400000
 # 日志级别
 log_level: info
-# 文件存储类型（local_mount = Docker NAS 挂载，留空则禁用）
-# storageType: local_mount
-# NAS 挂载路径
-# nasMountPath: /app/storage
-# NAS 文件访问 URL 前缀
-# nasFileUrlPrefix: http://192.168.1.100:8080/videos
