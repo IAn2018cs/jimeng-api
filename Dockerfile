@@ -57,8 +57,8 @@ COPY --from=builder --chown=jimeng:nodejs /app/dist ./dist
 COPY --from=builder --chown=jimeng:nodejs /app/configs ./configs
 
 # 创建应用需要的目录并设置权限
-RUN mkdir -p /app/logs /app/tmp /app/data && \
-    chown -R jimeng:nodejs /app/logs /app/tmp /app/data
+RUN mkdir -p /app/logs /app/tmp /app/data /app/storage && \
+    chown -R jimeng:nodejs /app/logs /app/tmp /app/data /app/storage
 
 # 复制 entrypoint 脚本
 COPY entrypoint.sh /app/entrypoint.sh
@@ -69,6 +69,13 @@ ENV SERVER_PORT=5100
 # playwright-core 使用系统 Chromium（不自动下载浏览器）
 ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 ENV PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium-browser
+# 文件存储：通过 Docker volume 挂载 NAS 目录
+# ENV STORAGE_TYPE=local_mount
+# ENV NAS_MOUNT_PATH=/app/storage
+# ENV NAS_FILE_URL_PREFIX=http://your-nas-ip:port/videos
+
+# 存储挂载点
+VOLUME ["/app/storage"]
 
 # 暴露端口
 EXPOSE 5100

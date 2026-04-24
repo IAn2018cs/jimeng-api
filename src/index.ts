@@ -7,6 +7,7 @@ import server from "@/lib/server.ts";
 import routes from "@/api/routes/index.ts";
 import logger from "@/lib/logger.ts";
 import taskStore from "@/lib/task-store.ts";
+import fileStorage from "@/lib/file-storage.ts";
 import util from "@/lib/util.ts";
 
 const startupTime = performance.now();
@@ -22,6 +23,13 @@ const startupTime = performance.now();
 
   // 初始化任务存储（SQLite）
   taskStore.initialize();
+
+  // 初始化文件存储（Docker NAS 挂载）
+  fileStorage.initialize({
+    storageType: config.system.storageType,
+    nasMountPath: config.system.nasMountPath,
+    nasFileUrlPrefix: config.system.nasFileUrlPrefix,
+  });
 
   // 定时清理过期任务（每小时执行一次）
   const cleanupJob = util.createCronJob('0 * * * *', () => {

@@ -15,6 +15,7 @@ import { uploadImageBuffer, ImageUploadResult } from "@/lib/image-uploader.ts";
 import { uploadVideoBuffer, VideoUploadResult } from "@/lib/video-uploader.ts";
 import { extractVideoUrl } from "@/lib/image-utils.ts";
 import taskStore from "@/lib/task-store.ts";
+import fileStorage from "@/lib/file-storage.ts";
 import browserService from "@/lib/browser-service.ts";
 
 export const DEFAULT_MODEL = DEFAULT_VIDEO_MODEL;
@@ -1135,7 +1136,8 @@ export async function generateVideo(
 ) {
   const historyId = await prepareAndSubmitVideo(_model, prompt, options, refreshToken);
   const { videoUrl } = await pollVideoResult(historyId, refreshToken);
-  return videoUrl;
+  // 下载视频并保存到文件存储（防止原始链接失效）
+  return fileStorage.downloadAndSave(videoUrl);
 }
 
 
@@ -1173,9 +1175,12 @@ export async function submitVideoTaskAsync(
       }
     );
 
+    // 下载视频并保存到文件存储（防止原始链接失效）
+    const persistedUrl = await fileStorage.downloadAndSave(videoUrl);
+
     // 标记任务完成
-    taskStore.completeTask(taskId, videoUrl, pollCount, elapsedTime);
-    logger.info(`异步视频任务 ${taskId} 完成，URL: ${videoUrl}`);
+    taskStore.completeTask(taskId, persistedUrl, pollCount, elapsedTime);
+    logger.info(`异步视频任务 ${taskId} 完成，URL: ${persistedUrl}`);
   } catch (error: any) {
     logger.error(`异步视频任务 ${taskId} 失败: ${error.message}`);
     taskStore.failTask(taskId, error.errmsg || error.message || '未知错误');

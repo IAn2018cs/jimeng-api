@@ -11,6 +11,8 @@ services:
     restart: unless-stopped
     ports:
       - "12015:5100"
+    env_file:
+      - .env
     volumes:
       # 挂载日志目录（确保权限正确）
       - ./logs:/app/logs
@@ -18,6 +20,8 @@ services:
       - ./tmp:/app/tmp
       # 挂载数据目录
       - ./data:/app/data
+      # NAS 存储挂载（通过 Docker named volume，见下方 volumes 定义）
+      - nas_videos:${NAS_MOUNT_PATH:-/app/storage}
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://localhost:5100/ping"]
       interval: 15s
@@ -30,3 +34,10 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+
+volumes:
+  nas_videos:
+    driver_opts:
+      type: cifs
+      o: "addr=${NAS_HOST},username=${NAS_USER},password=${NAS_PASSWORD},port=${NAS_PORT:-445},file_mode=0777,dir_mode=0777"
+      device: "//${NAS_HOST}/${NAS_SHARE_PATH}"

@@ -31,9 +31,15 @@ export class SystemConfig {
     debug: boolean;
     /** 日志级别 */
     log_level: string;
+    /** 存储类型（local_mount / none） */
+    storageType: string;
+    /** NAS 挂载路径（Docker volume 挂载目录） */
+    nasMountPath: string;
+    /** NAS 文件 URL 前缀（文件服务访问地址） */
+    nasFileUrlPrefix: string;
 
     constructor(options?: any) {
-        const { requestLog, tmpDir, logDir, logWriteInterval, logFileExpires, tmpFileExpires, requestBody, debug, log_level } = options || {};
+        const { requestLog, tmpDir, logDir, logWriteInterval, logFileExpires, tmpFileExpires, requestBody, debug, log_level, storageType, nasMountPath, nasFileUrlPrefix } = options || {};
         this.requestLog = _.defaultTo(requestLog, false);
         this.tmpDir = _.defaultTo(tmpDir, './tmp');
         this.logDir = _.defaultTo(logDir, './logs');
@@ -55,6 +61,9 @@ export class SystemConfig {
         });
         this.debug = _.defaultTo(debug, true);
         this.log_level = _.defaultTo(log_level, 'info');
+        this.storageType = _.defaultTo(storageType, process.env.STORAGE_TYPE || '');
+        this.nasMountPath = _.defaultTo(nasMountPath, process.env.NAS_MOUNT_PATH || '');
+        this.nasFileUrlPrefix = _.defaultTo(nasFileUrlPrefix, process.env.NAS_FILE_URL_PREFIX || '');
     }
 
     get rootDirPath() {
