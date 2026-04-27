@@ -8,6 +8,7 @@ import routes from "@/api/routes/index.ts";
 import logger from "@/lib/logger.ts";
 import taskStore from "@/lib/task-store.ts";
 import fileStorage from "@/lib/file-storage.ts";
+import objectStorage from "@/lib/object-storage.ts";
 import util from "@/lib/util.ts";
 
 const startupTime = performance.now();
@@ -29,6 +30,16 @@ const startupTime = performance.now();
     storageType: config.system.storageType,
     nasMountPath: config.system.nasMountPath,
     nasFileUrlPrefix: config.system.nasFileUrlPrefix,
+  });
+
+  // 初始化对象存储（火山引擎 TOS，用于视频文件上传）
+  objectStorage.initialize({
+    type: config.system.tosAccessKeyId ? "tos" : "none",
+    tosAccessKeyId: config.system.tosAccessKeyId,
+    tosAccessKeySecret: config.system.tosAccessKeySecret,
+    tosRegion: config.system.tosRegion,
+    tosEndpoint: config.system.tosEndpoint,
+    tosBucket: config.system.tosBucket,
   });
 
   // 定时清理过期任务（每小时执行一次）

@@ -3,6 +3,7 @@ import logger from "@/lib/logger.ts";
 import config from "@/lib/config.ts";
 import APIException from "@/lib/exceptions/APIException.ts";
 import EX from "@/api/consts/exceptions.ts";
+import { prepareFilesForVolcengine } from "@/lib/volcengine-file-prepare.ts";
 
 const ARK_BASE_URL = "https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks";
 
@@ -31,7 +32,8 @@ function buildContent(
 
   if (functionMode === "omni_reference") {
     for (const url of filePaths) {
-      const isVideo = /\.(mp4|mov)(\?|$)/i.test(url);
+      const isVideo = /\.(mp4|mov|avi|mkv|webm|flv|wmv|m4v)(\?|$)/i.test(url)
+        || /^data:video\//i.test(url);
       if (isVideo) {
         content.push({
           type: "video_url",
@@ -189,13 +191,28 @@ export async function generateVideoViaVolcengine(
     resolution?: string;
     duration?: number;
     filePaths?: string[];
+    files?: Record<string, any>;
     functionMode?: string;
   }
 ): Promise<string> {
   const arkModel = getArkModel(_model);
-  const filePaths = options.filePaths || [];
   const functionMode = options.functionMode || "first_last_frames";
-  const content = buildContent(prompt, filePaths, functionMode);
+
+  let preparedFilePaths: string[] = [];
+  const rawFilePaths = options.filePaths || [];
+  const hasFiles = options.files && Object.keys(options.files).length > 0;
+
+  if (hasFiles || rawFilePaths.length > 0) {
+    try {
+      preparedFilePaths = await prepareFilesForVolcengine(options.files, rawFilePaths);
+      logger.info(`[Volcengine] 文件预处理完成, 共 ${preparedFilePaths.length} 个文件`);
+    } catch (err: any) {
+      logger.warn(`[Volcengine] 文件预处理失败, 使用原始 filePaths: ${err.message}`);
+      preparedFilePaths = rawFilePaths;
+    }
+  }
+
+  const content = buildContent(prompt, preparedFilePaths, functionMode);
 
   const taskId = await createTask(arkModel, content, {
     ratio: options.ratio,
