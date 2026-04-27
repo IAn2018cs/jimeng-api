@@ -33,7 +33,7 @@ class TosObjectStorage implements IObjectStorage {
     bucket: string;
   }): Promise<TosObjectStorage> {
     const TOS = await import("@volcengine/tos-sdk");
-    const TosClient = TOS.default || (TOS as any).TOS || TOS;
+    const TosClient = TOS.TosClient || TOS.TOS;
     const client = new TosClient({
       accessKeyId: opts.accessKeyId,
       accessKeySecret: opts.accessKeySecret,
