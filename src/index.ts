@@ -33,7 +33,7 @@ const startupTime = performance.now();
   });
 
   // 初始化对象存储（火山引擎 TOS，用于视频文件上传）
-  objectStorage.initialize({
+  await objectStorage.initialize({
     type: config.system.tosAccessKeyId ? "tos" : "none",
     tosAccessKeyId: config.system.tosAccessKeyId,
     tosAccessKeySecret: config.system.tosAccessKeySecret,

@@ -19,25 +19,28 @@ class TosObjectStorage implements IObjectStorage {
   private bucket: string;
   private endpoint: string;
 
-  constructor(opts: {
+  private constructor(client: any, bucket: string, endpoint: string) {
+    this.client = client;
+    this.bucket = bucket;
+    this.endpoint = endpoint;
+  }
+
+  static async create(opts: {
     accessKeyId: string;
     accessKeySecret: string;
     region: string;
     endpoint: string;
     bucket: string;
-  }) {
-    // dynamic import 在 initialize 时完成，这里同步构造
-    // TOS SDK 是 CJS，通过 default export 取 TosClient
-    const TOS = require("@volcengine/tos-sdk");
-    const TosClient = TOS.default || TOS.TOS || TOS;
-    this.client = new TosClient({
+  }): Promise<TosObjectStorage> {
+    const TOS = await import("@volcengine/tos-sdk");
+    const TosClient = TOS.default || (TOS as any).TOS || TOS;
+    const client = new TosClient({
       accessKeyId: opts.accessKeyId,
       accessKeySecret: opts.accessKeySecret,
       region: opts.region,
       endpoint: opts.endpoint,
     });
-    this.bucket = opts.bucket;
-    this.endpoint = opts.endpoint;
+    return new TosObjectStorage(client, opts.bucket, opts.endpoint);
   }
 
   async upload(buffer: Buffer, key: string, contentType?: string): Promise<string> {
@@ -54,9 +57,9 @@ class TosObjectStorage implements IObjectStorage {
 class ObjectStorage {
   private storage: IObjectStorage | null = null;
 
-  initialize(config: ObjectStorageConfig): void {
+  async initialize(config: ObjectStorageConfig): Promise<void> {
     if (config.type === "tos" && config.tosAccessKeyId && config.tosBucket) {
-      this.storage = new TosObjectStorage({
+      this.storage = await TosObjectStorage.create({
         accessKeyId: config.tosAccessKeyId,
         accessKeySecret: config.tosAccessKeySecret,
         region: config.tosRegion,
