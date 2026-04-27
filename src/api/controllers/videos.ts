@@ -17,6 +17,8 @@ import { extractVideoUrl } from "@/lib/image-utils.ts";
 import taskStore from "@/lib/task-store.ts";
 import fileStorage from "@/lib/file-storage.ts";
 import browserService from "@/lib/browser-service.ts";
+import config from "@/lib/config.ts";
+import { generateVideoViaVolcengine } from "@/lib/volcengine-video.ts";
 
 export const DEFAULT_MODEL = DEFAULT_VIDEO_MODEL;
 
@@ -1112,6 +1114,18 @@ async function pollVideoResult(
 }
 
 
+function shouldFallbackToVolcengine(error: any, _model: string): boolean {
+  if (!config.system.arkApiKey || !_model.includes("seedance")) return false;
+  if (error instanceof APIException) {
+    const code = error.errcode;
+    if (code === EX.API_REQUEST_PARAMS_INVALID[0]) return false;
+    if (code === EX.API_CONTENT_FILTERED[0]) return false;
+    if (code === EX.API_TOKEN_EXPIRES[0]) return false;
+  }
+  return true;
+}
+
+
 /**
  * 生成视频（同步模式）
  *
@@ -1134,10 +1148,18 @@ export async function generateVideo(
   },
   refreshToken: string
 ) {
-  const historyId = await prepareAndSubmitVideo(_model, prompt, options, refreshToken);
-  const { videoUrl } = await pollVideoResult(historyId, refreshToken);
-  // 下载视频并保存到文件存储（防止原始链接失效）
-  return fileStorage.downloadAndSave(videoUrl);
+  try {
+    const historyId = await prepareAndSubmitVideo(_model, prompt, options, refreshToken);
+    const { videoUrl } = await pollVideoResult(historyId, refreshToken);
+    return fileStorage.downloadAndSave(videoUrl);
+  } catch (error: any) {
+    if (shouldFallbackToVolcengine(error, _model)) {
+      logger.warn(`即梦 Seedance 视频生成失败，尝试火山引擎备用渠道: ${error.message}`);
+      const videoUrl = await generateVideoViaVolcengine(_model, prompt, options);
+      return fileStorage.downloadAndSave(videoUrl);
+    }
+    throw error;
+  }
 }
 
 
@@ -1182,6 +1204,22 @@ export async function submitVideoTaskAsync(
     taskStore.completeTask(taskId, persistedUrl, pollCount, elapsedTime);
     logger.info(`异步视频任务 ${taskId} 完成，URL: ${persistedUrl}`);
   } catch (error: any) {
+    // 尝试火山引擎备用渠道
+    if (shouldFallbackToVolcengine(error, _model)) {
+      logger.warn(`异步任务 ${taskId}: 即梦 Seedance 失败，尝试火山引擎备用渠道: ${error.message}`);
+      try {
+        taskStore.updateTaskProgress(taskId, 0, '切换火山引擎备用渠道', 0, 0);
+        const videoUrl = await generateVideoViaVolcengine(_model, prompt, options);
+        const persistedUrl = await fileStorage.downloadAndSave(videoUrl);
+        taskStore.completeTask(taskId, persistedUrl, 0, 0);
+        logger.info(`异步视频任务 ${taskId} 通过火山引擎完成，URL: ${persistedUrl}`);
+        return;
+      } catch (fallbackError: any) {
+        logger.error(`异步任务 ${taskId}: 火山引擎备用渠道也失败: ${fallbackError.message}`);
+        taskStore.failTask(taskId, `即梦失败: ${error.message}; 火山引擎也失败: ${fallbackError.errmsg || fallbackError.message || '未知错误'}`);
+        return;
+      }
+    }
     logger.error(`异步视频任务 ${taskId} 失败: ${error.message}`);
     taskStore.failTask(taskId, error.errmsg || error.message || '未知错误');
   }

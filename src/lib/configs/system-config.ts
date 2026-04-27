@@ -37,9 +37,15 @@ export class SystemConfig {
     nasMountPath: string;
     /** NAS 文件 URL 前缀（文件服务访问地址） */
     nasFileUrlPrefix: string;
+    /** 火山引擎 ARK API Key（Seedance 备用渠道） */
+    arkApiKey: string;
+    /** 火山引擎 ARK Pro 模型 ID */
+    arkModel: string;
+    /** 火山引擎 ARK Fast 模型 ID */
+    arkFastModel: string;
 
     constructor(options?: any) {
-        const { requestLog, tmpDir, logDir, logWriteInterval, logFileExpires, tmpFileExpires, requestBody, debug, log_level, storageType, nasMountPath, nasFileUrlPrefix } = options || {};
+        const { requestLog, tmpDir, logDir, logWriteInterval, logFileExpires, tmpFileExpires, requestBody, debug, log_level, storageType, nasMountPath, nasFileUrlPrefix, arkApiKey, arkModel, arkFastModel } = options || {};
         this.requestLog = _.defaultTo(requestLog, false);
         this.tmpDir = _.defaultTo(tmpDir, './tmp');
         this.logDir = _.defaultTo(logDir, './logs');
@@ -64,6 +70,9 @@ export class SystemConfig {
         this.storageType = _.defaultTo(storageType, process.env.STORAGE_TYPE || '');
         this.nasMountPath = _.defaultTo(nasMountPath, process.env.NAS_MOUNT_PATH || '');
         this.nasFileUrlPrefix = _.defaultTo(nasFileUrlPrefix, process.env.NAS_FILE_URL_PREFIX || '');
+        this.arkApiKey = _.defaultTo(arkApiKey, process.env.ARK_API_KEY || '');
+        this.arkModel = _.defaultTo(arkModel, process.env.ARK_MODEL || 'doubao-seedance-2-0-260128');
+        this.arkFastModel = _.defaultTo(arkFastModel, process.env.ARK_FAST_MODEL || 'doubao-seedance-2-0-fast-260128');
     }
 
     get rootDirPath() {
