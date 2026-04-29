@@ -9,6 +9,33 @@ const ARK_BASE_URL = "https://ark.cn-beijing.volces.com/api/v3/contents/generati
 
 const POLL_INTERVAL_MS = 30_000;
 const POLL_TIMEOUT_MS = 30 * 60 * 1000;
+const NETWORK_RETRY_COUNT = 3;
+const NETWORK_RETRY_DELAY_MS = 5_000;
+
+const TRANSIENT_ERROR_CODES = ["EAI_AGAIN", "ENOTFOUND", "ECONNREFUSED", "ECONNRESET", "ETIMEDOUT", "EPIPE"];
+
+function isTransientNetworkError(error: any): boolean {
+  const code = error?.code || error?.cause?.code || "";
+  if (TRANSIENT_ERROR_CODES.includes(code)) return true;
+  const msg = error?.message || "";
+  return TRANSIENT_ERROR_CODES.some((c) => msg.includes(c));
+}
+
+async function withNetworkRetry<T>(fn: () => Promise<T>, label: string): Promise<T> {
+  for (let attempt = 1; attempt <= NETWORK_RETRY_COUNT; attempt++) {
+    try {
+      return await fn();
+    } catch (error: any) {
+      if (attempt < NETWORK_RETRY_COUNT && isTransientNetworkError(error)) {
+        logger.warn(`[Volcengine] ${label} 网络错误(${error.code || error.message})，${NETWORK_RETRY_DELAY_MS / 1000}s 后重试 (${attempt}/${NETWORK_RETRY_COUNT})`);
+        await new Promise((r) => setTimeout(r, NETWORK_RETRY_DELAY_MS));
+        continue;
+      }
+      throw error;
+    }
+  }
+  throw new Error("unreachable");
+}
 
 function getArkModel(_model: string): string {
   if (_model.includes("fast")) {
@@ -89,14 +116,18 @@ async function createTask(
 
   logger.info(`[Volcengine] 创建视频任务, model=${arkModel}, ratio=${options.ratio}, duration=${options.duration}`);
 
-  const response = await axios.post(ARK_BASE_URL, body, {
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${config.system.arkApiKey}`,
-    },
-    timeout: 60_000,
-    proxy: false,
-  });
+  const response = await withNetworkRetry(
+    () =>
+      axios.post(ARK_BASE_URL, body, {
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${config.system.arkApiKey}`,
+        },
+        timeout: 60_000,
+        proxy: false,
+      }),
+    "创建任务"
+  );
 
   const taskId = response.data?.id;
   if (!taskId) {
