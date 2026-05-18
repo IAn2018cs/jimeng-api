@@ -115,19 +115,32 @@ async function createTask(
   body.watermark = false;
 
   logger.info(`[Volcengine] 创建视频任务, model=${arkModel}, ratio=${options.ratio}, duration=${options.duration}`);
+  logger.debug(`[Volcengine] 请求体: ${JSON.stringify(body, null, 2)}`);
 
-  const response = await withNetworkRetry(
-    () =>
-      axios.post(ARK_BASE_URL, body, {
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${config.system.arkApiKey}`,
-        },
-        timeout: 60_000,
-        proxy: false,
-      }),
-    "创建任务"
-  );
+  let response: any;
+  try {
+    response = await withNetworkRetry(
+      () =>
+        axios.post(ARK_BASE_URL, body, {
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${config.system.arkApiKey}`,
+          },
+          timeout: 60_000,
+          proxy: false,
+        }),
+      "创建任务"
+    );
+  } catch (error: any) {
+    if (error?.response) {
+      const { status, data } = error.response;
+      const errCode = data?.error?.code || "unknown";
+      const errMsg = data?.error?.message || JSON.stringify(data);
+      logger.error(`[Volcengine] 创建任务HTTP错误, status=${status}, code=${errCode}, message=${errMsg}`);
+      throw new APIException(EX.API_VIDEO_GENERATION_FAILED, `[火山引擎] 创建视频任务失败(${status}, ${errCode}): ${errMsg}`);
+    }
+    throw error;
+  }
 
   const taskId = response.data?.id;
   if (!taskId) {
@@ -140,14 +153,24 @@ async function createTask(
 }
 
 async function queryTask(taskId: string): Promise<any> {
-  const response = await axios.get(`${ARK_BASE_URL}/${taskId}`, {
-    headers: {
-      Authorization: `Bearer ${config.system.arkApiKey}`,
-    },
-    timeout: 30_000,
-    proxy: false,
-  });
-  return response.data;
+  try {
+    const response = await axios.get(`${ARK_BASE_URL}/${taskId}`, {
+      headers: {
+        Authorization: `Bearer ${config.system.arkApiKey}`,
+      },
+      timeout: 30_000,
+      proxy: false,
+    });
+    return response.data;
+  } catch (error: any) {
+    if (error?.response) {
+      const { status, data } = error.response;
+      const errCode = data?.error?.code || "unknown";
+      const errMsg = data?.error?.message || JSON.stringify(data);
+      logger.error(`[Volcengine] 查询任务HTTP错误, task_id=${taskId}, status=${status}, code=${errCode}, message=${errMsg}`);
+    }
+    throw error;
+  }
 }
 
 function extractVideoUrl(taskResult: any): string | null {
@@ -196,9 +219,10 @@ async function pollUntilDone(taskId: string): Promise<string> {
       }
 
       if (status === "failed") {
-        const errMsg = result?.error?.message || result?.error || "未知错误";
-        logger.error(`[Volcengine] 任务失败: ${errMsg}`);
-        throw new APIException(EX.API_VIDEO_GENERATION_FAILED, `[火山引擎] 视频生成失败: ${errMsg}`);
+        const errCode = result?.error?.code || "unknown";
+        const errMsg = result?.error?.message || "未知错误";
+        logger.error(`[Volcengine] 任务失败, task_id=${taskId}, code=${errCode}, message=${errMsg}`);
+        throw new APIException(EX.API_VIDEO_GENERATION_FAILED, `[火山引擎] 视频生成失败(${errCode}): ${errMsg}`);
       }
 
       if (status === "expired") {
