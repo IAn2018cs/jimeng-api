@@ -93,10 +93,12 @@ export default {
 
             // === 异步模式 ===
             if (finalAsync) {
+                const hasUploadedFiles = uploadedFiles.length > 0;
                 const taskId = taskStore.createTask({
                     model, prompt, ratio, resolution,
-                    duration: finalDuration, filePaths: finalFilePaths, functionMode
-                });
+                    duration: finalDuration, filePaths: finalFilePaths, functionMode,
+                    hasUploadedFiles
+                }, token);
 
                 // 加入并发队列（最多同时执行 5 个任务）
                 taskQueue.enqueue(taskId, () =>

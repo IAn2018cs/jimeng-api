@@ -134,9 +134,17 @@ TaskQueue (src/lib/task-queue.ts):
 
 TaskStore (src/lib/task-store.ts):
   SQLite (WAL模式), 预编译SQL
-  表: video_tasks (task_id PK, status, history_id, video_url, ...)
+  表: video_tasks (task_id PK, status, history_id, video_url, channel, channel_task_id, refresh_token, ...)
   进度缓存: 内存Map (避免高频写入)
   定时清理: 每小时删除 >3天 过期任务
+  终态幂等: completeTask/failTask 不会覆盖已完成/已失败状态
+
+重启恢复 (src/lib/task-recovery.ts):
+  时机: 所有存储初始化完成后、HTTP 服务启动前
+  processing + channel_task_id 非空 → 恢复轮询 (jimeng 用 pollVideoResult, volcengine 用 pollUntilDone)
+  pending + refresh_token 非空 + 无 multipart 文件 → 重新提交执行
+  processing + channel_task_id 为空 / pending 无 token / pending 含临时文件 → 标记失败
+  渠道字段在 updateTaskSubmitted 时原子写入，消除中间状态窗口
 ```
 
 ### 2.5 文件上传

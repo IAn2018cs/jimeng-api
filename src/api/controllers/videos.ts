@@ -978,7 +978,7 @@ async function fetchHighQualityVideoUrl(itemId: string, refreshToken: string): P
  * @param onProgress 可选的进度回调
  * @returns 视频URL
  */
-async function pollVideoResult(
+export async function pollVideoResult(
   historyId: string,
   refreshToken: string,
   onProgress?: (status: number, progressText: string, pollCount: number, elapsedSeconds: number) => void
@@ -1184,8 +1184,8 @@ export async function submitVideoTaskAsync(
   try {
     const historyId = await prepareAndSubmitVideo(_model, prompt, options, refreshToken);
 
-    // 更新任务状态为 processing
-    taskStore.updateTaskSubmitted(taskId, historyId);
+    // 更新任务状态为 processing，同时原子写入渠道信息
+    taskStore.updateTaskSubmitted(taskId, historyId, "jimeng", historyId, refreshToken);
     logger.info(`异步视频任务 ${taskId} 已提交，history_id: ${historyId}，开始后台轮询...`);
 
     // 后台轮询，通过 onProgress 回调更新数据库
@@ -1209,7 +1209,9 @@ export async function submitVideoTaskAsync(
       logger.warn(`异步任务 ${taskId}: 即梦 Seedance 失败，尝试火山引擎备用渠道: ${error.message}`);
       try {
         taskStore.updateTaskProgress(taskId, 0, '切换火山引擎备用渠道', 0, 0);
-        const videoUrl = await generateVideoViaVolcengine(_model, prompt, options);
+        const videoUrl = await generateVideoViaVolcengine(_model, prompt, options, (arkTaskId) => {
+          taskStore.updateChannel(taskId, "volcengine", arkTaskId);
+        });
         const persistedUrl = await fileStorage.downloadAndSave(videoUrl);
         taskStore.completeTask(taskId, persistedUrl, 0, 0);
         logger.info(`异步视频任务 ${taskId} 通过火山引擎完成，URL: ${persistedUrl}`);

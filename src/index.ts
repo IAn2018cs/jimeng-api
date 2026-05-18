@@ -7,6 +7,7 @@ import server from "@/lib/server.ts";
 import routes from "@/api/routes/index.ts";
 import logger from "@/lib/logger.ts";
 import taskStore from "@/lib/task-store.ts";
+import { recoverTasks } from "@/lib/task-recovery.ts";
 import fileStorage from "@/lib/file-storage.ts";
 import objectStorage from "@/lib/object-storage.ts";
 import util from "@/lib/util.ts";
@@ -54,6 +55,9 @@ const startupTime = performance.now();
     }
   });
   cleanupJob.start();
+
+  // 恢复重启前中断的任务（在所有存储初始化完成后执行）
+  await recoverTasks();
 
   server.attachRoutes(routes);
   await server.listen();

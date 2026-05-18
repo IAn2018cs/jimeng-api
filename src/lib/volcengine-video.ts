@@ -193,7 +193,7 @@ function extractVideoUrl(taskResult: any): string | null {
   return match ? match[0] : null;
 }
 
-async function pollUntilDone(taskId: string): Promise<string> {
+export async function pollUntilDone(taskId: string): Promise<string> {
   const startTime = Date.now();
   let pollCount = 0;
 
@@ -248,7 +248,8 @@ export async function generateVideoViaVolcengine(
     filePaths?: string[];
     files?: Record<string, any>;
     functionMode?: string;
-  }
+  },
+  onTaskCreated?: (arkTaskId: string) => void
 ): Promise<string> {
   const arkModel = getArkModel(_model);
   const functionMode = options.functionMode || "first_last_frames";
@@ -274,6 +275,8 @@ export async function generateVideoViaVolcengine(
     resolution: options.resolution,
     duration: options.duration,
   });
+
+  onTaskCreated?.(taskId);
 
   return pollUntilDone(taskId);
 }

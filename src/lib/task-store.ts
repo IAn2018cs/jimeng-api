@@ -20,6 +20,9 @@ export interface VideoTask {
   created_at: number;
   updated_at: number;
   expires_at: number;
+  channel: string | null;
+  channel_task_id: string | null;
+  refresh_token: string | null;
 }
 
 // 任务有效期 3 天（秒）
@@ -47,9 +50,13 @@ class TaskStore {
   private stmts!: {
     createTask: Database.Statement;
     updateSubmitted: Database.Statement;
+    updateChannel: Database.Statement;
     completeTask: Database.Statement;
     failTask: Database.Statement;
     getTask: Database.Statement;
+    getRecoverable: Database.Statement;
+    getPending: Database.Statement;
+    getUnrecoverable: Database.Statement;
     cleanExpired: Database.Statement;
   };
 
@@ -79,56 +86,68 @@ class TaskStore {
       CREATE INDEX IF NOT EXISTS idx_expires_at ON video_tasks(expires_at);
     `);
 
+    // 数据库迁移：逐列检查并新增恢复相关字段
+    const columns = (this.db.pragma("table_info(video_tasks)") as any[]).map((c: any) => c.name);
+    if (!columns.includes("channel")) {
+      this.db.exec("ALTER TABLE video_tasks ADD COLUMN channel TEXT DEFAULT NULL");
+    }
+    if (!columns.includes("channel_task_id")) {
+      this.db.exec("ALTER TABLE video_tasks ADD COLUMN channel_task_id TEXT DEFAULT NULL");
+    }
+    if (!columns.includes("refresh_token")) {
+      this.db.exec("ALTER TABLE video_tasks ADD COLUMN refresh_token TEXT DEFAULT NULL");
+    }
+
     // 预编译所有 statements，避免每次调用都重新 prepare
     this.stmts = {
       createTask: this.db.prepare(
-        `INSERT INTO video_tasks (task_id, status, request_params, created_at, updated_at, expires_at)
-         VALUES (?, 'pending', ?, ?, ?, ?)`
+        `INSERT INTO video_tasks (task_id, status, request_params, refresh_token, created_at, updated_at, expires_at)
+         VALUES (?, 'pending', ?, ?, ?, ?, ?)`
       ),
       updateSubmitted: this.db.prepare(
-        `UPDATE video_tasks SET status = 'processing', history_id = ?, updated_at = ? WHERE task_id = ?`
+        `UPDATE video_tasks SET status = 'processing', history_id = ?, channel = ?, channel_task_id = ?, refresh_token = coalesce(?, refresh_token), updated_at = ? WHERE task_id = ?`
+      ),
+      updateChannel: this.db.prepare(
+        `UPDATE video_tasks SET channel = ?, channel_task_id = ?, refresh_token = coalesce(?, refresh_token), updated_at = ? WHERE task_id = ?`
       ),
       completeTask: this.db.prepare(
         `UPDATE video_tasks SET status = 'completed', video_url = ?, upstream_status = 10,
          progress_text = 'SUCCESS', poll_count = ?, elapsed_seconds = ?, updated_at = ?
-         WHERE task_id = ?`
+         WHERE task_id = ? AND status != 'completed'`
       ),
       failTask: this.db.prepare(
-        `UPDATE video_tasks SET status = 'failed', error_message = ?, updated_at = ? WHERE task_id = ?`
+        `UPDATE video_tasks SET status = 'failed', error_message = ?, updated_at = ? WHERE task_id = ? AND status NOT IN ('completed', 'failed')`
       ),
       getTask: this.db.prepare(
         `SELECT * FROM video_tasks WHERE task_id = ?`
+      ),
+      getRecoverable: this.db.prepare(
+        `SELECT * FROM video_tasks WHERE status = 'processing' AND channel_task_id IS NOT NULL AND expires_at > ?`
+      ),
+      getPending: this.db.prepare(
+        `SELECT * FROM video_tasks WHERE status = 'pending' AND expires_at > ?`
+      ),
+      getUnrecoverable: this.db.prepare(
+        `SELECT * FROM video_tasks WHERE status = 'processing' AND channel_task_id IS NULL`
       ),
       cleanExpired: this.db.prepare(
         `DELETE FROM video_tasks WHERE expires_at < ?`
       ),
     };
 
-    // 服务重启恢复：将所有 processing 状态的任务标记为失败
-    const recovered = this.db
-      .prepare(
-        "UPDATE video_tasks SET status = 'failed', error_message = '服务重启导致任务中断', updated_at = ? WHERE status = 'processing'"
-      )
-      .run(util.unixTimestamp());
-    if (recovered.changes > 0) {
-      logger.warn(
-        `TaskStore: ${recovered.changes} 个进行中的任务因服务重启被标记为失败`
-      );
-    }
-
     logger.info(`TaskStore initialized, database: ${DB_PATH}`);
   }
 
-  createTask(requestParams: Record<string, any>): string {
+  createTask(requestParams: Record<string, any>, refreshToken?: string): string {
     const taskId = util.uuid();
     const now = util.unixTimestamp();
-    this.stmts.createTask.run(taskId, JSON.stringify(requestParams), now, now, now + TASK_TTL_SECONDS);
+    this.stmts.createTask.run(taskId, JSON.stringify(requestParams), refreshToken || null, now, now, now + TASK_TTL_SECONDS);
     return taskId;
   }
 
-  updateTaskSubmitted(taskId: string, historyId: string): void {
+  updateTaskSubmitted(taskId: string, historyId: string, channel: string, channelTaskId: string, refreshToken?: string): void {
     const now = util.unixTimestamp();
-    this.stmts.updateSubmitted.run(historyId, now, taskId);
+    this.stmts.updateSubmitted.run(historyId, channel, channelTaskId, refreshToken || null, now, taskId);
   }
 
   /**
@@ -185,6 +204,25 @@ class TaskStore {
       task.updated_at = progress.updatedAt;
     }
     return task;
+  }
+
+  updateChannel(taskId: string, channel: string, channelTaskId: string, refreshToken?: string): void {
+    const now = util.unixTimestamp();
+    this.stmts.updateChannel.run(channel, channelTaskId, refreshToken || null, now, taskId);
+  }
+
+  getRecoverableTasks(): VideoTask[] {
+    const now = util.unixTimestamp();
+    return this.stmts.getRecoverable.all(now) as VideoTask[];
+  }
+
+  getPendingTasks(): VideoTask[] {
+    const now = util.unixTimestamp();
+    return this.stmts.getPending.all(now) as VideoTask[];
+  }
+
+  getUnrecoverableTasks(): VideoTask[] {
+    return this.stmts.getUnrecoverable.all() as VideoTask[];
   }
 
   cleanExpiredTasks(): number {
