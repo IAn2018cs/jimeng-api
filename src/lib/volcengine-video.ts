@@ -37,6 +37,59 @@ async function withNetworkRetry<T>(fn: () => Promise<T>, label: string): Promise
   throw new Error("unreachable");
 }
 
+const VOLCENGINE_ERROR_MAP: [string, string][] = [
+  ["SensitiveContentDetected.SevereViolation", "输入内容可能包含严重违规信息，请更换后重试"],
+  ["SensitiveContentDetected.Violence", "输入内容可能包含暴力相关信息，请更换后重试"],
+  ["SensitiveContentDetected", "输入内容可能包含敏感信息，请更换后重试"],
+  ["InputTextSensitiveContentDetected.PolicyViolation", "输入文本可能涉及版权限制，请更换后重试"],
+  ["InputImageSensitiveContentDetected.PolicyViolation", "输入图片可能涉及版权限制，请更换后重试"],
+  ["InputImageSensitiveContentDetected.PrivacyInformation", "输入图片可能包含真人，请更换后重试"],
+  ["InputVideoSensitiveContentDetected.PolicyViolation", "输入视频可能涉及版权限制，请更换后重试"],
+  ["InputVideoSensitiveContentDetected.PrivacyInformation", "输入视频可能包含真人，请更换后重试"],
+  ["OutputVideoSensitiveContentDetected.PolicyViolation", "生成的视频可能涉及版权限制，请更换输入内容后重试"],
+  ["InputTextSensitiveContentDetected", "输入文本可能包含敏感信息，请更换后重试"],
+  ["InputImageSensitiveContentDetected", "输入图像可能包含敏感信息，请更换后重试"],
+  ["InputVideoSensitiveContentDetected", "输入视频可能包含敏感信息，请更换后重试"],
+  ["InputAudioSensitiveContentDetected", "输入音频可能包含敏感信息，请更换后重试"],
+  ["OutputTextSensitiveContentDetected", "生成的文字可能包含敏感信息，请更换输入内容后重试"],
+  ["OutputImageSensitiveContentDetected", "生成的图像可能包含敏感信息，请更换输入内容后重试"],
+  ["OutputVideoSensitiveContentDetected", "生成的视频可能包含敏感信息，请更换输入内容后重试"],
+  ["OutputAudioSensitiveContentDetected", "生成的音频可能包含敏感信息，请更换输入内容后重试"],
+  ["InputTextRiskDetection", "输入文本包含敏感信息，请更换后重试"],
+  ["InputImageRiskDetection", "输入图片包含敏感信息，请更换后重试"],
+  ["OutputTextRiskDetection", "输出文本包含敏感信息，请更换输入内容后重试"],
+  ["OutputImageRiskDetection", "输出图片包含敏感信息，请更换输入内容后重试"],
+  ["ContentSecurityDetectionError", "内容安全检测服务异常，请稍后重试"],
+  ["InvalidEndpoint.ClosedEndpoint", "推理接入点已关闭或暂时不可用，请稍后重试"],
+  ["MissingParameter", "请求缺少必要参数"],
+  ["InvalidParameter", "请求包含非法参数"],
+  ["AuthenticationError", "API Key 校验未通过"],
+  ["InvalidAccountStatus", "账号状态异常"],
+  ["AccountOverdueError", "账号欠费，请充值后重试"],
+  ["AccessDenied", "无访问权限"],
+  ["OperationDenied.ServiceNotOpen", "模型服务未开通"],
+  ["OperationDenied.ServiceOverdue", "账单已逾期，请充值后重试"],
+  ["InvalidEndpointOrModel.NotFound", "模型或推理接入点不存在"],
+  ["ModelNotOpen", "模型服务未开通"],
+  ["RateLimitExceeded", "请求频率超限，请稍后重试"],
+  ["ModelAccountRpmRateLimitExceeded", "模型请求频率超限(RPM)，请稍后重试"],
+  ["ModelAccountTpmRateLimitExceeded", "模型请求频率超限(TPM)，请稍后重试"],
+  ["ModelAccountIpmRateLimitExceeded", "模型请求频率超限(IPM)，请稍后重试"],
+  ["AccountRateLimitExceeded", "请求频率超限，请稍后重试"],
+  ["QuotaExceeded", "额度已用完，请稍后重试"],
+  ["ServerOverloaded", "服务资源紧张，请稍后重试"],
+  ["RequestBurstTooFast", "请求量激增，请放缓后重试"],
+  ["InternalServiceError", "服务内部异常，请稍后重试"],
+];
+
+function getReadableVolcengineError(code: string): string {
+  if (!code || code === "unknown") return "未知错误";
+  for (const [prefix, msg] of VOLCENGINE_ERROR_MAP) {
+    if (code === prefix || code.startsWith(prefix + ".")) return msg;
+  }
+  return `错误(${code})`;
+}
+
 function getArkModel(_model: string): string {
   if (_model.includes("fast")) {
     return config.system.arkFastModel;
@@ -137,7 +190,7 @@ async function createTask(
       const errCode = data?.error?.code || "unknown";
       const errMsg = data?.error?.message || JSON.stringify(data);
       logger.error(`[Volcengine] 创建任务HTTP错误, status=${status}, code=${errCode}, message=${errMsg}`);
-      throw new APIException(EX.API_VIDEO_GENERATION_FAILED, `[火山引擎] 创建视频任务失败(${status}, ${errCode}): ${errMsg}`);
+      throw new APIException(EX.API_VIDEO_GENERATION_FAILED, `[火山引擎] ${getReadableVolcengineError(errCode)}`);
     }
     throw error;
   }
@@ -222,7 +275,7 @@ export async function pollUntilDone(taskId: string): Promise<string> {
         const errCode = result?.error?.code || "unknown";
         const errMsg = result?.error?.message || "未知错误";
         logger.error(`[Volcengine] 任务失败, task_id=${taskId}, code=${errCode}, message=${errMsg}`);
-        throw new APIException(EX.API_VIDEO_GENERATION_FAILED, `[火山引擎] 视频生成失败(${errCode}): ${errMsg}`);
+        throw new APIException(EX.API_VIDEO_GENERATION_FAILED, `[火山引擎] ${getReadableVolcengineError(errCode)}`);
       }
 
       if (status === "expired") {

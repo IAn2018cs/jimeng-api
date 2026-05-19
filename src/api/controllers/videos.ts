@@ -1218,7 +1218,7 @@ export async function submitVideoTaskAsync(
         return;
       } catch (fallbackError: any) {
         logger.error(`异步任务 ${taskId}: 火山引擎备用渠道也失败: ${fallbackError.message}${fallbackError.response?.data ? ', response=' + JSON.stringify(fallbackError.response.data) : ''}`);
-        taskStore.failTask(taskId, `即梦失败: ${error.message}; 火山引擎也失败: ${fallbackError.errmsg || fallbackError.message || '未知错误'}`);
+        taskStore.failTask(taskId, fallbackError.errmsg || fallbackError.message || '未知错误');
         return;
       }
     }
