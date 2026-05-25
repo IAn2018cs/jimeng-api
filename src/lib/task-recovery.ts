@@ -3,7 +3,7 @@ import taskStore from "@/lib/task-store.ts";
 import taskQueue from "@/lib/task-queue.ts";
 import fileStorage from "@/lib/file-storage.ts";
 import { pollVideoResult } from "@/api/controllers/videos.ts";
-import { pollUntilDone } from "@/lib/volcengine-video.ts";
+import { pollUntilDone, resolveTaskEndpoint } from "@/lib/volcengine-video.ts";
 import type { VideoTask } from "@/lib/task-store.ts";
 
 export async function recoverTasks(): Promise<void> {
@@ -84,7 +84,8 @@ async function resumeTask(task: VideoTask): Promise<void> {
       );
       videoUrl = result.videoUrl;
     } else if (channel === "volcengine") {
-      videoUrl = await pollUntilDone(channelTaskId);
+      const endpoint = await resolveTaskEndpoint(channelTaskId);
+      videoUrl = await pollUntilDone(channelTaskId, endpoint);
     } else {
       taskStore.failTask(taskId, `恢复失败：未知渠道 ${channel}`);
       return;

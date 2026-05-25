@@ -63,10 +63,15 @@ Controller: src/api/controllers/videos.ts
 ### 1.5 火山引擎备用渠道
 
 ```
-触发: Seedance 2.0模型 + 配置了 ARK_API_KEY
+触发: Seedance 2.0模型 + 配置了 ARK_API_KEY 或 ARK_AGENT_PLAN_API_KEY
 文件: src/lib/volcengine-video.ts
 
-POST https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks
+优先: Agent Plan 渠道 (ARK_AGENT_PLAN_API_KEY)
+  POST https://ark.cn-beijing.volces.com/api/plan/v3/contents/generations/tasks
+回退: 标准渠道 (ARK_API_KEY)
+  POST https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks
+
+创建任务失败时自动回退（内容敏感错误不回退，直接抛出）
   → 30s间隔轮询 GET .../tasks/{id}
   → status: processing→succeed/failed
   → 提取mp4 URL返回
@@ -214,7 +219,8 @@ HTTP重试: 3次, 5秒间隔, 可重试错误类型: ECONNRESET/ETIMEDOUT/ENOTFO
 | STORAGE_TYPE | 存储类型 | none |
 | NAS_MOUNT_PATH | NAS挂载路径 | - |
 | NAS_FILE_URL_PREFIX | NAS文件URL前缀 | - |
-| ARK_API_KEY | 火山引擎Key | - |
+| ARK_AGENT_PLAN_API_KEY | 火山引擎Agent Plan Key（优先） | - |
+| ARK_API_KEY | 火山引擎Key（回退） | - |
 | ARK_MODEL | Seedance Pro模型 | doubao-seedance-2-0-260128 |
 | ARK_FAST_MODEL | Seedance Fast模型 | doubao-seedance-2-0-fast-260128 |
 | PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH | Chromium路径 | - |

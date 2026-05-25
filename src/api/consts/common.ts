@@ -32,7 +32,7 @@ export const VERSION_CODE = "8.4.0";
 // 默认模型
 export const DEFAULT_IMAGE_MODEL = "jimeng-4.5";
 export const DEFAULT_IMAGE_MODEL_US = "jimeng-4.5";
-export const DEFAULT_VIDEO_MODEL = "jimeng-video-3.5-pro";
+export const DEFAULT_VIDEO_MODEL = "jimeng-video-seedance-2.0-fast-vip";
 
 // 草稿版本
 export const DRAFT_VERSION = "3.3.8";

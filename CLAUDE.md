@@ -42,7 +42,7 @@ grep -n "API_" src/api/consts/exceptions.ts
 # 区域检测逻辑
 grep -n "parseRegion" src/lib/region-utils.ts
 
-# 火山引擎备用渠道
+# 火山引擎备用渠道（Agent Plan 优先，Standard 回退）
 src/lib/volcengine-video.ts
 
 # 轮询配置

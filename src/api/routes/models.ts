@@ -9,33 +9,28 @@ export default {
             return {
                 "data": [
                     {
-                        "id": "jimeng",
-                        "object": "model",
-                        "owned_by": "jimeng-api"
-                    },
-                    {
-                        "id": "jimeng-video-3.0",
+                        "id": "jimeng-video-seedance-2.0-fast-vip",
                         "object": "model",
                         "owned_by": "jimeng-api",
-                        "description": "即梦AI视频生成模型 3.0 版本"
+                        "description": "Seedance 2.0 Fast VIP (默认)"
                     },
                     {
-                        "id": "jimeng-video-3.0-pro",
+                        "id": "jimeng-video-seedance-2.0-vip",
                         "object": "model",
                         "owned_by": "jimeng-api",
-                        "description": "即梦AI视频生成模型 3.0 专业版"
+                        "description": "Seedance 2.0 Pro VIP"
                     },
                     {
-                        "id": "jimeng-video-2.0",
+                        "id": "jimeng-video-seedance-2.0-fast",
                         "object": "model",
                         "owned_by": "jimeng-api",
-                        "description": "即梦AI视频生成模型 2.0 版本"
+                        "description": "Seedance 2.0 Fast"
                     },
                     {
-                        "id": "jimeng-video-2.0-pro",
+                        "id": "jimeng-video-seedance-2.0",
                         "object": "model",
                         "owned_by": "jimeng-api",
-                        "description": "即梦AI视频生成模型 2.0 专业版"
+                        "description": "Seedance 2.0 Pro"
                     }
                 ]
             };

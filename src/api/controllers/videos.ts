@@ -1115,7 +1115,7 @@ export async function pollVideoResult(
 
 
 function shouldFallbackToVolcengine(error: any, _model: string): boolean {
-  if (!config.system.arkApiKey || !_model.includes("seedance")) return false;
+  if ((!config.system.arkApiKey && !config.system.arkAgentPlanApiKey) || !_model.includes("seedance")) return false;
   if (error instanceof APIException) {
     const code = error.errcode;
     if (code === EX.API_REQUEST_PARAMS_INVALID[0]) return false;

@@ -6,6 +6,13 @@ import EX from "@/api/consts/exceptions.ts";
 import { prepareFilesForVolcengine } from "@/lib/volcengine-file-prepare.ts";
 
 const ARK_BASE_URL = "https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks";
+const ARK_AGENT_PLAN_BASE_URL = "https://ark.cn-beijing.volces.com/api/plan/v3/contents/generations/tasks";
+
+export interface ArkEndpoint {
+  baseUrl: string;
+  apiKey: string;
+  label: string;
+}
 
 const POLL_INTERVAL_MS = 30_000;
 const POLL_TIMEOUT_MS = 30 * 60 * 1000;
@@ -90,11 +97,51 @@ function getReadableVolcengineError(code: string): string {
   return `错误(${code})`;
 }
 
+const SENSITIVE_ERROR_PREFIXES = [
+  "SensitiveContentDetected",
+  "InputTextSensitiveContentDetected",
+  "InputImageSensitiveContentDetected",
+  "InputVideoSensitiveContentDetected",
+  "InputAudioSensitiveContentDetected",
+  "OutputTextSensitiveContentDetected",
+  "OutputImageSensitiveContentDetected",
+  "OutputVideoSensitiveContentDetected",
+  "OutputAudioSensitiveContentDetected",
+  "InputTextRiskDetection",
+  "InputImageRiskDetection",
+  "OutputTextRiskDetection",
+  "OutputImageRiskDetection",
+];
+
+function isSensitiveContentError(code: string): boolean {
+  if (!code) return false;
+  return SENSITIVE_ERROR_PREFIXES.some((p) => code === p || code.startsWith(p + "."));
+}
+
 function getArkModel(_model: string): string {
   if (_model.includes("fast")) {
     return config.system.arkFastModel;
   }
   return config.system.arkModel;
+}
+
+function getEndpoints(): ArkEndpoint[] {
+  const endpoints: ArkEndpoint[] = [];
+  if (config.system.arkAgentPlanApiKey) {
+    endpoints.push({
+      baseUrl: ARK_AGENT_PLAN_BASE_URL,
+      apiKey: config.system.arkAgentPlanApiKey,
+      label: "AgentPlan",
+    });
+  }
+  if (config.system.arkApiKey) {
+    endpoints.push({
+      baseUrl: ARK_BASE_URL,
+      apiKey: config.system.arkApiKey,
+      label: "Standard",
+    });
+  }
+  return endpoints;
 }
 
 function buildContent(
@@ -149,7 +196,8 @@ function buildContent(
 async function createTask(
   arkModel: string,
   content: any[],
-  options: { ratio?: string; resolution?: string; duration?: number }
+  options: { ratio?: string; resolution?: string; duration?: number },
+  endpoint: ArkEndpoint
 ): Promise<string> {
   const body: any = {
     model: arkModel,
@@ -167,49 +215,49 @@ async function createTask(
   }
   body.watermark = false;
 
-  logger.info(`[Volcengine] 创建视频任务, model=${arkModel}, ratio=${options.ratio}, duration=${options.duration}`);
-  logger.debug(`[Volcengine] 请求体: ${JSON.stringify(body, null, 2)}`);
+  logger.info(`[Volcengine][${endpoint.label}] 创建视频任务, model=${arkModel}, ratio=${options.ratio}, duration=${options.duration}`);
+  logger.debug(`[Volcengine][${endpoint.label}] 请求体: ${JSON.stringify(body, null, 2)}`);
 
   let response: any;
   try {
     response = await withNetworkRetry(
       () =>
-        axios.post(ARK_BASE_URL, body, {
+        axios.post(endpoint.baseUrl, body, {
           headers: {
             "Content-Type": "application/json",
-            Authorization: `Bearer ${config.system.arkApiKey}`,
+            Authorization: `Bearer ${endpoint.apiKey}`,
           },
           timeout: 60_000,
           proxy: false,
         }),
-      "创建任务"
+      `创建任务(${endpoint.label})`
     );
   } catch (error: any) {
     if (error?.response) {
       const { status, data } = error.response;
       const errCode = data?.error?.code || "unknown";
       const errMsg = data?.error?.message || JSON.stringify(data);
-      logger.error(`[Volcengine] 创建任务HTTP错误, status=${status}, code=${errCode}, message=${errMsg}`);
-      throw new APIException(EX.API_VIDEO_GENERATION_FAILED, `[火山引擎] ${getReadableVolcengineError(errCode)}: ${errMsg}`);
+      logger.error(`[Volcengine][${endpoint.label}] 创建任务HTTP错误, status=${status}, code=${errCode}, message=${errMsg}`);
+      throw new APIException(EX.API_VIDEO_GENERATION_FAILED, `[火山引擎] ${getReadableVolcengineError(errCode)}: ${errMsg}`).setData({ volcengineErrorCode: errCode });
     }
     throw error;
   }
 
   const taskId = response.data?.id;
   if (!taskId) {
-    logger.error(`[Volcengine] 创建任务失败，响应: ${JSON.stringify(response.data)}`);
+    logger.error(`[Volcengine][${endpoint.label}] 创建任务失败，响应: ${JSON.stringify(response.data)}`);
     throw new APIException(EX.API_VIDEO_GENERATION_FAILED, `[火山引擎] 创建视频任务失败`);
   }
 
-  logger.info(`[Volcengine] 任务创建成功, task_id=${taskId}`);
+  logger.info(`[Volcengine][${endpoint.label}] 任务创建成功, task_id=${taskId}`);
   return taskId;
 }
 
-async function queryTask(taskId: string): Promise<any> {
+async function queryTask(taskId: string, endpoint: ArkEndpoint): Promise<any> {
   try {
-    const response = await axios.get(`${ARK_BASE_URL}/${taskId}`, {
+    const response = await axios.get(`${endpoint.baseUrl}/${taskId}`, {
       headers: {
-        Authorization: `Bearer ${config.system.arkApiKey}`,
+        Authorization: `Bearer ${endpoint.apiKey}`,
       },
       timeout: 30_000,
       proxy: false,
@@ -220,7 +268,7 @@ async function queryTask(taskId: string): Promise<any> {
       const { status, data } = error.response;
       const errCode = data?.error?.code || "unknown";
       const errMsg = data?.error?.message || JSON.stringify(data);
-      logger.error(`[Volcengine] 查询任务HTTP错误, task_id=${taskId}, status=${status}, code=${errCode}, message=${errMsg}`);
+      logger.error(`[Volcengine][${endpoint.label}] 查询任务HTTP错误, task_id=${taskId}, status=${status}, code=${errCode}, message=${errMsg}`);
     }
     throw error;
   }
@@ -246,7 +294,27 @@ function extractVideoUrl(taskResult: any): string | null {
   return match ? match[0] : null;
 }
 
-export async function pollUntilDone(taskId: string): Promise<string> {
+export async function resolveTaskEndpoint(taskId: string): Promise<ArkEndpoint> {
+  const endpoints = getEndpoints();
+  for (const ep of endpoints) {
+    try {
+      const result = await queryTask(taskId, ep);
+      if (result?.id || result?.status) {
+        logger.info(`[Volcengine] 恢复任务 ${taskId} 匹配到 ${ep.label} 渠道`);
+        return ep;
+      }
+    } catch {
+      // ignore, try next
+    }
+  }
+  if (endpoints.length > 0) {
+    logger.warn(`[Volcengine] 恢复任务 ${taskId} 无法确定渠道，使用 ${endpoints[0].label}`);
+    return endpoints[0];
+  }
+  return { baseUrl: ARK_BASE_URL, apiKey: config.system.arkApiKey, label: "Standard" };
+}
+
+export async function pollUntilDone(taskId: string, endpoint: ArkEndpoint): Promise<string> {
   const startTime = Date.now();
   let pollCount = 0;
 
@@ -255,10 +323,10 @@ export async function pollUntilDone(taskId: string): Promise<string> {
     pollCount++;
 
     try {
-      const result = await queryTask(taskId);
+      const result = await queryTask(taskId, endpoint);
       const status = result?.status;
 
-      logger.info(`[Volcengine] 轮询 #${pollCount}, task_id=${taskId}, status=${status}`);
+      logger.info(`[Volcengine][${endpoint.label}] 轮询 #${pollCount}, task_id=${taskId}, status=${status}`);
 
       if (status === "succeeded") {
         const videoUrl = extractVideoUrl(result);
@@ -322,14 +390,41 @@ export async function generateVideoViaVolcengine(
   }
 
   const content = buildContent(prompt, preparedFilePaths, functionMode);
-
-  const taskId = await createTask(arkModel, content, {
+  const taskOptions = {
     ratio: options.ratio,
     resolution: options.resolution,
     duration: options.duration,
-  });
+  };
 
-  onTaskCreated?.(taskId);
+  const endpoints = getEndpoints();
+  if (endpoints.length === 0) {
+    throw new APIException(EX.API_VIDEO_GENERATION_FAILED, "[火山引擎] 未配置 ARK API Key");
+  }
 
-  return pollUntilDone(taskId);
+  let taskId: string | undefined;
+  let usedEndpoint: ArkEndpoint | undefined;
+
+  for (let i = 0; i < endpoints.length; i++) {
+    const ep = endpoints[i];
+    try {
+      taskId = await createTask(arkModel, content, taskOptions, ep);
+      usedEndpoint = ep;
+      break;
+    } catch (error: any) {
+      const volcCode = error?.data?.volcengineErrorCode || "";
+      if (isSensitiveContentError(volcCode)) {
+        logger.warn(`[Volcengine][${ep.label}] 内容敏感错误，不再回退`);
+        throw error;
+      }
+      if (i < endpoints.length - 1) {
+        logger.warn(`[Volcengine][${ep.label}] 创建任务失败(${error.message})，回退到 ${endpoints[i + 1].label}`);
+        continue;
+      }
+      throw error;
+    }
+  }
+
+  onTaskCreated?.(taskId!);
+
+  return pollUntilDone(taskId!, usedEndpoint!);
 }
