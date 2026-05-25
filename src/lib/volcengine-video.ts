@@ -190,7 +190,7 @@ async function createTask(
       const errCode = data?.error?.code || "unknown";
       const errMsg = data?.error?.message || JSON.stringify(data);
       logger.error(`[Volcengine] 创建任务HTTP错误, status=${status}, code=${errCode}, message=${errMsg}`);
-      throw new APIException(EX.API_VIDEO_GENERATION_FAILED, `[火山引擎] ${getReadableVolcengineError(errCode)}`);
+      throw new APIException(EX.API_VIDEO_GENERATION_FAILED, `[火山引擎] ${getReadableVolcengineError(errCode)}: ${errMsg}`);
     }
     throw error;
   }
@@ -275,7 +275,7 @@ export async function pollUntilDone(taskId: string): Promise<string> {
         const errCode = result?.error?.code || "unknown";
         const errMsg = result?.error?.message || "未知错误";
         logger.error(`[Volcengine] 任务失败, task_id=${taskId}, code=${errCode}, message=${errMsg}`);
-        throw new APIException(EX.API_VIDEO_GENERATION_FAILED, `[火山引擎] ${getReadableVolcengineError(errCode)}`);
+        throw new APIException(EX.API_VIDEO_GENERATION_FAILED, `[火山引擎] ${getReadableVolcengineError(errCode)}: ${errMsg}`);
       }
 
       if (status === "expired") {
