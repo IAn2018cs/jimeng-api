@@ -227,7 +227,7 @@ async function createTask(
             "Content-Type": "application/json",
             Authorization: `Bearer ${endpoint.apiKey}`,
           },
-          timeout: 60_000,
+          timeout: config.system.arkCreateTaskTimeoutMs,
           proxy: false,
         }),
       `创建任务(${endpoint.label})`

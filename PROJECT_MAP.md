@@ -223,6 +223,7 @@ HTTP重试: 3次, 5秒间隔, 可重试错误类型: ECONNRESET/ETIMEDOUT/ENOTFO
 | ARK_API_KEY | 火山引擎Key（回退） | - |
 | ARK_MODEL | Seedance Pro模型 | doubao-seedance-2-0-260128 |
 | ARK_FAST_MODEL | Seedance Fast模型 | doubao-seedance-2-0-fast-260128 |
+| ARK_CREATE_TASK_TIMEOUT_MS | 火山引擎创建视频任务请求超时 | 1200000 |
 | PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH | Chromium路径 | - |
 
 ### 配置加载链路

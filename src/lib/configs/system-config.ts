@@ -45,6 +45,8 @@ export class SystemConfig {
     arkModel: string;
     /** 火山引擎 ARK Fast 模型 ID */
     arkFastModel: string;
+    /** 火山引擎创建视频任务请求超时（毫秒） */
+    arkCreateTaskTimeoutMs: number;
     /** 火山引擎 TOS Access Key ID */
     tosAccessKeyId: string;
     /** 火山引擎 TOS Access Key Secret */
@@ -57,7 +59,7 @@ export class SystemConfig {
     tosBucket: string;
 
     constructor(options?: any) {
-        const { requestLog, tmpDir, logDir, logWriteInterval, logFileExpires, tmpFileExpires, requestBody, debug, log_level, storageType, nasMountPath, nasFileUrlPrefix, arkApiKey, arkAgentPlanApiKey, arkModel, arkFastModel, tosAccessKeyId, tosAccessKeySecret, tosRegion, tosEndpoint, tosBucket } = options || {};
+        const { requestLog, tmpDir, logDir, logWriteInterval, logFileExpires, tmpFileExpires, requestBody, debug, log_level, storageType, nasMountPath, nasFileUrlPrefix, arkApiKey, arkAgentPlanApiKey, arkModel, arkFastModel, arkCreateTaskTimeoutMs, tosAccessKeyId, tosAccessKeySecret, tosRegion, tosEndpoint, tosBucket } = options || {};
         this.requestLog = _.defaultTo(requestLog, false);
         this.tmpDir = _.defaultTo(tmpDir, './tmp');
         this.logDir = _.defaultTo(logDir, './logs');
@@ -86,6 +88,7 @@ export class SystemConfig {
         this.arkAgentPlanApiKey = _.defaultTo(arkAgentPlanApiKey, process.env.ARK_AGENT_PLAN_API_KEY || '');
         this.arkModel = _.defaultTo(arkModel, process.env.ARK_MODEL || 'doubao-seedance-2-0-260128');
         this.arkFastModel = _.defaultTo(arkFastModel, process.env.ARK_FAST_MODEL || 'doubao-seedance-2-0-fast-260128');
+        this.arkCreateTaskTimeoutMs = Number(_.defaultTo(arkCreateTaskTimeoutMs, process.env.ARK_CREATE_TASK_TIMEOUT_MS || 1200000));
         this.tosAccessKeyId = _.defaultTo(tosAccessKeyId, process.env.TOS_ACCESS_KEY_ID || '');
         this.tosAccessKeySecret = _.defaultTo(tosAccessKeySecret, process.env.TOS_ACCESS_KEY_SECRET || '');
         this.tosRegion = _.defaultTo(tosRegion, process.env.TOS_REGION || '');
