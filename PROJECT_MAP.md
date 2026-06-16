@@ -296,6 +296,7 @@ src/lib/config.ts — 统一导出 { service, system }
 ## 七、开发备忘
 
 - **import 路径必须带 `.ts` 后缀** (ESM + NodeNext)
+- **运行时**: Node.js 22+ (better-sqlite3 12.x 不支持 Node 18)
 - **type-check 有已知第三方类型错误**, 忽略 logger.ts / koa-body / image-uploader 相关
 - **Seedance 模型走 Playwright** 绕过 a_bogus 签名, 非 Seedance 走普通 HTTP
 - **端口**: dev=5100, Docker映射=12015
