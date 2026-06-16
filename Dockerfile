@@ -1,5 +1,5 @@
 # 构建阶段
-FROM node:22-alpine AS builder
+FROM node:18-alpine AS builder
 
 # 设置工作目录
 WORKDIR /app
@@ -28,7 +28,7 @@ RUN if [ -n "$VERSION" ]; then \
 RUN npm run build
 
 # 生产阶段
-FROM node:22-alpine AS production
+FROM node:18-alpine AS production
 
 # 安装健康检查工具、su-exec（用于entrypoint切换用户）和原生模块编译依赖（better-sqlite3 需要）
 # 同时安装 Chromium 及其运行依赖（playwright-core 使用系统 Chromium 驱动浏览器）
