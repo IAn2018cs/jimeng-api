@@ -125,13 +125,21 @@ function getArkModel(_model: string): string {
   return config.system.arkModel;
 }
 
+export function splitArkApiKeys(value: string): string[] {
+  return [...new Set(value
+    .split(/[,\n]/)
+    .map((key) => key.trim())
+    .filter(Boolean))];
+}
+
 function getEndpoints(): ArkEndpoint[] {
   const endpoints: ArkEndpoint[] = [];
-  if (config.system.arkAgentPlanApiKey) {
+  const agentPlanApiKeys = splitArkApiKeys(config.system.arkAgentPlanApiKey);
+  for (let i = 0; i < agentPlanApiKeys.length; i++) {
     endpoints.push({
       baseUrl: ARK_AGENT_PLAN_BASE_URL,
-      apiKey: config.system.arkAgentPlanApiKey,
-      label: "AgentPlan",
+      apiKey: agentPlanApiKeys[i],
+      label: agentPlanApiKeys.length === 1 ? "AgentPlan" : `AgentPlan#${i + 1}`,
     });
   }
   if (config.system.arkApiKey) {
