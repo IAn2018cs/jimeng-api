@@ -7,6 +7,8 @@ import { prepareFilesForVolcengine } from "@/lib/volcengine-file-prepare.ts";
 
 const ARK_BASE_URL = "https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks";
 const ARK_AGENT_PLAN_BASE_URL = "https://ark.cn-beijing.volces.com/api/plan/v3/contents/generations/tasks";
+const ARK_AGENT_PLAN_MODEL = "doubao-seedance-2.0";
+const ARK_AGENT_PLAN_FAST_MODEL = "doubao-seedance-2.0-fast";
 
 export interface ArkEndpoint {
   baseUrl: string;
@@ -125,6 +127,13 @@ function getArkModel(_model: string): string {
   return config.system.arkModel;
 }
 
+export function getArkEndpointModel(arkModel: string, endpoint: ArkEndpoint, configuredModel = config.system.arkModel, configuredFastModel = config.system.arkFastModel): string {
+  if (endpoint.baseUrl !== ARK_AGENT_PLAN_BASE_URL) return arkModel;
+  if (arkModel === configuredFastModel) return ARK_AGENT_PLAN_FAST_MODEL;
+  if (arkModel === configuredModel) return ARK_AGENT_PLAN_MODEL;
+  return arkModel;
+}
+
 export function splitArkApiKeys(value: string): string[] {
   return [...new Set(value
     .split(/[,\n]/)
@@ -207,8 +216,9 @@ async function createTask(
   options: { ratio?: string; resolution?: string; duration?: number },
   endpoint: ArkEndpoint
 ): Promise<string> {
+  const model = getArkEndpointModel(arkModel, endpoint);
   const body: any = {
-    model: arkModel,
+    model,
     content,
   };
 
@@ -223,7 +233,7 @@ async function createTask(
   }
   body.watermark = false;
 
-  logger.info(`[Volcengine][${endpoint.label}] 创建视频任务, model=${arkModel}, ratio=${options.ratio}, duration=${options.duration}`);
+  logger.info(`[Volcengine][${endpoint.label}] 创建视频任务, model=${model}, ratio=${options.ratio}, duration=${options.duration}`);
   logger.debug(`[Volcengine][${endpoint.label}] 请求体: ${JSON.stringify(body, null, 2)}`);
 
   let response: any;
