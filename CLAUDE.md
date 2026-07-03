@@ -82,3 +82,7 @@ src/lib/config.ts → src/lib/configs/system-config.ts
 ## 活文档约定
 
 每次改功能时同步更新 PROJECT_MAP.md 中对应段落。CLAUDE.md 只维护索引和约定，不放流程细节。
+
+## Git 提交约定
+
+提交信息遵循 [docs/git_commit_convention.md](docs/git_commit_convention.md)：使用中文说明，格式参考 Conventional Commits。
