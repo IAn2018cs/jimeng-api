@@ -48,10 +48,10 @@ Controller: src/api/controllers/videos.ts
   A. first_last_frames: 最多2文件(首帧+末帧)
   B. omni_reference: 最多12文件(9图+3视频), parseOmniPrompt()解析@引用
 
-提交: POST /mweb/v1/complete_request_draft → historyId
+提交: POST /mweb/v1/aigc_draft/generate → historyId
 
 同步模式 (async=false):
-  → SmartPoller轮询 (5s间隔) → videoUrl → 返回
+  → SmartPoller轮询 (首次等待5s, 60s基础间隔) → videoUrl → 返回
 
 异步模式 (async=true):
   → taskStore.createTask() → taskQueue.enqueue()
@@ -61,6 +61,8 @@ Controller: src/api/controllers/videos.ts
 ```
 
 ### 1.5 火山引擎备用渠道
+
+详版见：`jimeng-video-api/docs/seedance-video-module-architecture.md`
 
 ```
 触发: Seedance 2.0模型 + 配置了 ARK_API_KEY 或 ARK_AGENT_PLAN_API_KEY
@@ -74,7 +76,7 @@ Controller: src/api/controllers/videos.ts
 创建任务失败时自动回退（内容敏感错误不回退，直接抛出）
   → 创建任务显式设置 execution_expires_after (默认172800s)
   → 30s间隔轮询 GET .../tasks/{id} (本地2小时上限)
-  → status: processing→succeed/failed
+  → status: processing→succeeded/failed/expired
   → 提取mp4 URL返回
 ```
 
@@ -196,10 +198,10 @@ HTTP重试: 3次, 5秒间隔, 可重试错误类型: ECONNRESET/ETIMEDOUT/ENOTFO
   nanobananapro      → nanobananapro (外部)
 
 视频模型:
-  jimeng-video-3.5-pro → 默认视频模型
-  jimeng-video-4.0-pro → 40_pro系列 (4-15秒)
-  seedance-2.0       → doubao-seedance-2-0 (火山引擎)
-  seedance-2.0-fast  → doubao-seedance-2-0-fast
+  jimeng-video-seedance-2.0-fast-vip → 默认视频模型, dreamina_seedance_40_vision
+  seedance-2.0 / seedance-2.0-pro    → dreamina_seedance_40_pro
+  seedance-2.0-fast                  → dreamina_seedance_40
+  seedance-2.0-vip                   → dreamina_seedance_40_pro_vision
   veo3               → veo3 (固定8秒)
   sora2              → sora2 (4/8/12秒)
 ```
@@ -279,9 +281,9 @@ src/lib/config.ts — 统一导出 { service, system }
 ┌──────────────────────────────────────────────────────────────┐
 │ submitVideoTaskAsync                                          │
 │  1. 文件上传 (image/video → 即梦CDN)                          │
-│  2. POST /mweb/v1/complete_request_draft → historyId         │
+│  2. POST /mweb/v1/aigc_draft/generate → historyId            │
 │  3. taskStore.updateTaskSubmitted()                           │
-│  4. SmartPoller 轮询 (5s, 900次上限)                          │
+│  4. SmartPoller 轮询 (首次5s, 60s基础间隔)                    │
 │  5. 成功 → fileStorage.downloadAndSave() → NAS              │
 │  6. taskStore.completeTask(finalUrl)                          │
 └──────────────────────────────────────────────────────────────┘
