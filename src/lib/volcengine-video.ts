@@ -17,7 +17,7 @@ export interface ArkEndpoint {
 }
 
 const POLL_INTERVAL_MS = 30_000;
-const POLL_TIMEOUT_MS = 30 * 60 * 1000;
+const POLL_TIMEOUT_MS = 2 * 60 * 60 * 1000;
 const NETWORK_RETRY_COUNT = 3;
 const NETWORK_RETRY_DELAY_MS = 5_000;
 
@@ -232,8 +232,9 @@ async function createTask(
     body.duration = options.duration;
   }
   body.watermark = false;
+  body.execution_expires_after = config.system.arkTaskExpireSeconds;
 
-  logger.info(`[Volcengine][${endpoint.label}] 创建视频任务, model=${model}, ratio=${options.ratio}, duration=${options.duration}`);
+  logger.info(`[Volcengine][${endpoint.label}] 创建视频任务, model=${model}, ratio=${options.ratio}, duration=${options.duration}, expires=${body.execution_expires_after}s`);
   logger.debug(`[Volcengine][${endpoint.label}] 请求体: ${JSON.stringify(body, null, 2)}`);
 
   let response: any;

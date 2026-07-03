@@ -72,7 +72,8 @@ Controller: src/api/controllers/videos.ts
   POST https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks
 
 创建任务失败时自动回退（内容敏感错误不回退，直接抛出）
-  → 30s间隔轮询 GET .../tasks/{id}
+  → 创建任务显式设置 execution_expires_after (默认172800s)
+  → 30s间隔轮询 GET .../tasks/{id} (本地2小时上限)
   → status: processing→succeed/failed
   → 提取mp4 URL返回
 ```
@@ -224,6 +225,7 @@ HTTP重试: 3次, 5秒间隔, 可重试错误类型: ECONNRESET/ETIMEDOUT/ENOTFO
 | ARK_MODEL | Seedance Pro模型 | doubao-seedance-2-0-260128 |
 | ARK_FAST_MODEL | Seedance Fast模型 | doubao-seedance-2-0-fast-260128 |
 | ARK_CREATE_TASK_TIMEOUT_MS | 火山引擎创建视频任务请求超时 | 1200000 |
+| ARK_TASK_EXPIRE_SECONDS | 火山引擎视频任务过期时间 | 172800 |
 | PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH | Chromium路径 | - |
 
 ### 配置加载链路
